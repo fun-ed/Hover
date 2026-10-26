@@ -95,7 +95,7 @@ extension App {
                                       "permissions": "missing", "ready": false, "canGrant": true, "busy": false,
                                       "hint": "CuaDriver needs Accessibility and Screen Recording. Grant them once; agents can’t drive apps until then."])
             model.computerUse = true
-            for (name, page) in [("start", SettingsModel.Page.start), ("general", .general), ("usage", .usage), ("computer-use", .computerUse), ("tool", .tool("codex"))] {
+            for (name, page) in [("start", SettingsModel.Page.start), ("general", .general), ("usage", .usage), ("computer-use", .computerUse), ("storage", .storage), ("tool", .tool("codex"))] {
                 model.page = page
                 RunLoop.current.run(until: Date().addingTimeInterval(0.4))
                 content.layoutSubtreeIfNeeded()

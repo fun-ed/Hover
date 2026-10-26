@@ -299,6 +299,17 @@ func ToolDomains(t core.AgentTool) []string {
 			"cloudcode-pa.googleapis.com", "daily-cloudcode-pa.googleapis.com", "generativelanguage.googleapis.com",
 			"antigravity.google", "*.antigravity.google", "play.googleapis.com",
 		}
+	case core.Omp, core.OmpOpus, core.OmpSol:
+		// Oh My Pi brings the user's own providers, as OpenCode does; others go in
+		// allowed-domains.txt.
+		return []string{
+			"api.anthropic.com", "api.openai.com", "chatgpt.com", "*.chatgpt.com", "openrouter.ai", "*.openrouter.ai",
+			"generativelanguage.googleapis.com", "*.githubcopilot.com", "api.x.ai", "api.groq.com", "api.mistral.ai",
+			"api.deepseek.com", "ollama.com", "*.ollama.com", "api.together.xyz", "api.fireworks.ai", "api.cerebras.ai",
+		}
+	case core.Devin:
+		// Its sign-in and model server (server.codeium.com), and Cognition's own hosts.
+		return []string{"devin.ai", "*.devin.ai", "codeium.com", "*.codeium.com", "cognition.ai", "*.cognition.ai", "windsurf.com", "*.windsurf.com"}
 	}
 	// Only old chats have Custom (an agent of the user's own, gone from Hover); nothing starts for it.
 	return nil
@@ -415,6 +426,11 @@ func ToolState(t core.AgentTool, c SandboxCtx) []string {
 	case core.Agy:
 		// GEMINI_HOME: the ACP server's token and settings (antigravity-acp/) and the CLI's.
 		own = []string{"~/.gemini"}
+	case core.Omp, core.OmpOpus, core.OmpSol:
+		// Every profile lives under ~/.omp (profiles/<name>).
+		own = []string{"~/.omp"}
+	case core.Devin:
+		own = []string{"~/.devin", "~/.config/devin", "~/.local/share/devin", "~/Library/Application Support/devin"}
 	}
 	// What builds and package managers the agents run write to.
 	shared := []string{
@@ -468,11 +484,11 @@ func SandboxConfig(tool core.AgentTool, folders []string, temp string, sockets, 
 		}
 	}
 	support := c.support()
-	// Images pasted into a prompt are kept in Hover's folder, and the prompt names them for
+	// Images and files attached to a prompt are kept in Hover's folder, and the prompt names them for
 	// the agent to read; Cua Driver runs behind Hover's guard, Hover's browser relay and the
 	// MCP configs Hover writes are read the same way (readable, not writable).
 	read := slices.Clone(folders)
-	for _, d := range []string{"kiro-images", "cua", "browser", "mcp"} {
+	for _, d := range []string{"kiro-images", "attachments", "cua", "browser", "mcp"} {
 		read = append(read, support+"/"+d)
 	}
 	write := slices.Clone(folders)

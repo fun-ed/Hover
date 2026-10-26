@@ -81,10 +81,17 @@ final class MenuBar: NSObject, NSMenuDelegate {
 
     // MARK: Menu
 
+    // macOS 13 has no section headers; a disabled item stands in.
+    private static func header(_ title: String) -> NSMenuItem {
+        if #available(macOS 14.0, *) { return .sectionHeader(title: title) }
+        let item = NSMenuItem(title: title, action: nil, keyEquivalent: ""); item.isEnabled = false
+        return item
+    }
+
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
         guard let app else { return }
-        menu.addItem(.sectionHeader(title: "Usage"))
+        menu.addItem(Self.header("Usage"))
         let shown = Self.quotaIds.filter(enabled.contains)
         if shown.isEmpty {
             let hint = NSMenuItem(title: "Choose tools below to show their usage here", action: nil, keyEquivalent: ""); hint.isEnabled = false
@@ -115,7 +122,7 @@ final class MenuBar: NSObject, NSMenuDelegate {
         menu.addItem(readers)
 
         menu.addItem(.separator())
-        menu.addItem(.sectionHeader(title: "Agents"))
+        menu.addItem(Self.header("Agents"))
         let active = sessions.filter { ["working", "waking", "waiting"].contains($0["stage"] as? String ?? "") }
         if active.isEmpty {
             let quiet = NSMenuItem(title: "The office is quiet", action: nil, keyEquivalent: ""); quiet.isEnabled = false

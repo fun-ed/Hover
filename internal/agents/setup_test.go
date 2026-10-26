@@ -68,7 +68,7 @@ func TestEachToolUsesItsMakersInstaller(t *testing.T) {
 }
 
 func TestNothingToDoWhenEverythingIsInstalled(t *testing.T) {
-	all := have("codex", "codex-acp", "kiro-cli", "cursor-agent", "opencode", "claude", "agy_acp_server.par", "npm", "brew")
+	all := have("codex", "codex-acp", "kiro-cli", "cursor-agent", "opencode", "claude", "agy_acp_server.par", "omp", "bun", "devin", "npm", "brew")
 	for _, tool := range core.AllTools {
 		if p := PlanWith(tool, all, nil); len(p) != 0 {
 			t.Error(tool, p)

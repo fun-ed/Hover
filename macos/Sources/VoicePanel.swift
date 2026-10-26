@@ -96,7 +96,7 @@ final class VoiceModel: ObservableObject {
 enum VoiceRoute {
     static let bots = ["Pip", "Juno", "Moss", "Nova", "Ada", "Rue"]
     // Kiro is a new word to the speech models, which hear it as these.
-    private static let tools: [(String, String)] = [("open ?code", "opencode"), ("kiro|kyro|keiro|keyro|kero|piro|pyro|kira", "kiro"), ("codex|codecs", "codex"), ("cursor", "cursor"), ("claude( code)?|cloud code", "claude"), ("anti ?gravity|agy", "agy")]
+    private static let tools: [(String, String)] = [("open ?code", "opencode"), ("kiro|kyro|keiro|keyro|kero|piro|pyro|kira", "kiro"), ("codex|codecs", "codex"), ("cursor", "cursor"), ("claude( code)?|cloud code", "claude"), ("anti ?gravity|agy", "agy"), ("(oh my )?pi opus|omp opus", "omp-opus"), ("(oh my )?pi sol|omp sol", "omp-sol"), ("oh my pi|omp", "omp"), ("devin|devon", "devin")]
 
     /// A leading "Ask Codex to …", "Codex, …" or "Tell Pip …" picks the agent, and comes off the task.
     static func agent(in text: String, sessions: [VoiceSession]) -> (String, VoiceTarget?) {
@@ -441,7 +441,8 @@ final class VoiceController: NSObject, DictationSink {
 
     private func refreshChoices() {
         let tools = (state["tools"] as? [[String: Any]] ?? []).compactMap { t -> VoiceTool? in
-            guard let id = t["id"] as? String else { return nil }
+            // An agent switched off in Settings is not offered.
+            guard let id = t["id"] as? String, t["enabled"] as? Bool != false else { return nil }
             return VoiceTool(id: id, name: t["name"] as? String ?? Marks.name(id), ready: t["ready"] as? Bool ?? false, hint: t["hint"] as? String ?? "", access: t["access"] as? String ?? "full")
         }
         model.tools = tools.isEmpty ? SettingsModel.order.map { VoiceTool(id: $0, name: Marks.name($0), ready: true, hint: "", access: "full") } : tools
@@ -789,9 +790,9 @@ private struct ComposeCard: View {
         }
         .padding(16)
         .onAppear { DispatchQueue.main.async { focused = true } }
-        .onChange(of: model.text) { _, new in if new != model.original { model.stopCountdown(); model.problem = nil } }
-        .onChange(of: model.target) { _, _ in model.stopCountdown(); model.problem = nil }
-        .onChange(of: model.folder) { _, _ in model.stopCountdown() }
+        .onChange(of: model.text) { new in if new != model.original { model.stopCountdown(); model.problem = nil } }
+        .onChange(of: model.target) { _ in model.stopCountdown(); model.problem = nil }
+        .onChange(of: model.folder) { _ in model.stopCountdown() }
     }
 
     private var accessLabel: String? {

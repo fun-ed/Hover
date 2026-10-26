@@ -58,6 +58,7 @@ them up later.
 | **Agent browser** | macOS. Agents get a browser they can open pages in, read, click and type in; you see it in the desk card's Browser tab. |
 | **Agent setup** | macOS. One click installs an agent with its maker's own installer and opens its sign-in. |
 | **Discord status** | Off until you switch it on in Settings → Integrations. Your Discord status reads "Playing Hover", with how many agents are working and which ones. Task names are never shared. The Discord app has to be open on the same computer. |
+| **Attachments** | Paste, drop or pick up to four images and ten other files (20 MB each, 50 MB in all) with a task or a reply. Every agent is told where each file is; on a Mac, an ACP agent also gets small text files inside the prompt and the rest as links (images as images to Kiro, Codex, Oh My Pi and Devin), and Claude Code gets images, PDFs and small text files inside its message. |
 | **Reply, queue, pause** | Replies sent during a run wait their turn. Pause stops the current answer, and the next queued reply starts once the agent confirms. |
 | **Voice** | Hold `Ctrl+Alt+Space`, say a task, let go. Speech is turned into text on your computer (Phonon) or by Groq. |
 | **Projects** | Register the folders voice may work in, the other names you call them by, and each folder's own tool access. |
@@ -82,7 +83,7 @@ Download the latest build from [Releases](https://github.com/4regab/Hover/releas
 | Windows 10/11 (x64) | `Hover-Setup-<version>.exe`. It installs over a 2.x install in place and keeps your data. |
 | Ubuntu 22.04+ and Debian-based (x64) | `hover_<version>_amd64.deb` |
 | Other Linux (x64) | `hover-<version>-linux-x86_64.tar.gz`, or [build from source](#build-from-source) |
-| macOS 14+ (Apple Silicon or Intel) | `Hover-<version>-macos-arm64.dmg` (Apple silicon) or `Hover-<version>-macos-x64.dmg` (Intel). Open it and drag Hover to Applications. It isn't notarized yet, so open it the first time with right-click → Open. See [docs/MACOS.md](docs/MACOS.md). |
+| macOS 13+ (Apple Silicon or Intel) | `Hover-<version>-macos-arm64.dmg` (Apple silicon) or `Hover-<version>-macos-x64.dmg` (Intel). Open it and drag Hover to Applications. It isn't notarized yet, so open it the first time with right-click → Open. See [docs/MACOS.md](docs/MACOS.md). |
 
 Hover then lives in the tray (the menu bar on a Mac). Only one copy runs at a time: starting it again opens the
 dashboard of the copy that is already running.
@@ -98,10 +99,14 @@ Hover drives the agents you already have. Install and sign in to at least one:
 | Cursor | `cursor-agent` |
 | OpenCode | `opencode` |
 | Claude Code | `claude` (signed in, or an API key, Bedrock or Vertex) |
+| Oh My Pi (Mac only) | `omp acp`, `omp --profile=opus acp` and `omp --profile=sol acp`: three agents, one per profile |
+| Devin (Mac only) | `devin acp` (the local agent, signed in with `devin auth login`) |
 
 The office shows which agents it found, and how to install or sign in to the rest. On a
 Mac, each agent's page in Settings has a **Set up** row that installs what is missing and
-opens the tool's own sign-in; Hover never sees the credentials.
+opens the tool's own sign-in; Hover never sees the credentials. Its **Use in Hover** switch
+turns an agent off: it leaves the office's and voice's agent lists, and Hover never checks or
+starts it. One agent always stays on.
 
 ## Getting started
 
@@ -212,6 +217,10 @@ There is no account, server or analytics.
 - **Voice data.** Cloud sends the audio to Groq; Local keeps recognition on your computer.
   Cleanup gets the text, never the audio. The recording is deleted after it is turned into
   text.
+- **Attachments** are kept as files in the data folder (`kiro-images` for images, `attachments` for other
+  files), unencrypted, and deleted 14 days after they were added (7 or 30 in Settings → Storage on a
+  Mac, which also shows what Hover's folder holds and cleans it). `hover.log` starts again past 5 MB,
+  keeping the one before as `hover.log.1`.
 - **Checkpoints** are copies of the files in your project folder (what its `.gitignore` leaves out is not copied), kept in a Git store in the data folder (`checkpoints`), unencrypted like the files themselves. Deleting a session deletes its copies.
 - **Kiro Web.** A task you send there goes to Kiro's cloud: its prompt and replies. The cloud
   clones the repo from GitHub, never from your computer, and gets none of your local MCP
@@ -233,7 +242,7 @@ There is no account, server or analytics.
 
 ## Platform support
 
-| | Windows 10/11 x64 | Linux x64 (Wayland) | macOS 14+ |
+| | Windows 10/11 x64 | Linux x64 (Wayland) | macOS 13+ |
 |---|---|---|---|
 | Notch, office, Settings | ✓ | ✓ on a compositor with layer-shell (KDE Plasma, Sway, Hyprland); not on GNOME's own, which has none | ✓ around the camera notch (unverified on a Mac) |
 | Quotas | on the notch | on the notch | in the menu bar |
@@ -245,7 +254,7 @@ There is no account, server or analytics.
 | One-click agent setup | off | off | ✓ |
 | Computer use | off | off | ✓ |
 | Agent desktops (Cua Spaces) | off | off | ✓ on macOS 26+, Apple silicon |
-| Screen panel | ✓ | off (Wayland shows no other program's windows) | ✓ |
+| Screen panel | ✓ | off (Wayland shows no other program's windows) | ✓ on macOS 14+; blank on 13 |
 | Desk card, helpers, Pull request tab | ✓ | ✓ | ✓ |
 | Release package | installer | .deb, tarball | disk image (signed ad hoc) |
 

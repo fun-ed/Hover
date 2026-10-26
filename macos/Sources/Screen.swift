@@ -110,6 +110,8 @@ final class ScreenFeed: @unchecked Sendable {
     /// wallpaper and its icons) and the agent's apps' windows, nothing else: not the
     /// user's apps, not Hover. The pointer shows only while the agent drives an app.
     static func capture(apps: Apps, cursor: Bool) async -> String? {
+        // shortcut: macOS 13 has no SCScreenshotManager, so the Screen tab stays blank there; capture one SCStream frame if 13 needs it.
+        guard #available(macOS 14.0, *) else { return nil }
         do {
             let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
             guard let display = content.displays.first(where: { $0.displayID == CGMainDisplayID() }) ?? content.displays.first else { return nil }

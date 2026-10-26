@@ -55,7 +55,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 // `open -a Hover --args --settings [start|general|usage|computer-use|<tool>]` opens Settings.
                 if let i = CommandLine.arguments.firstIndex(of: "--settings") {
                     let name = CommandLine.arguments.dropFirst(i + 1).first ?? "start"
-                    let page: SettingsModel.Page = name == "general" ? .general : name == "usage" ? .usage : name == "computer-use" ? .computerUse : name == "voice" ? .voice
+                    let page: SettingsModel.Page = name == "general" ? .general : name == "usage" ? .usage : name == "computer-use" ? .computerUse : name == "voice" ? .voice : name == "storage" ? .storage
                         : SettingsModel.order.contains(name) ? .tool(name) : .start
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in self?.presentSettings(page) }
                 }
@@ -102,18 +102,22 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
         voice = v
     }
     func startPolling() {
-        // Notchy tracks the pointer with event monitors; the 50 ms timer (Windows'
-        // poll) also catches the pointer arriving without a move event (Spaces, wake).
-        poll = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
+        // Notchy tracks the pointer with event monitors; the timer only catches the pointer
+        // arriving without a move event (Spaces, wake), so 200 ms (not Windows' 50) will do,
+        // and the tolerance lets macOS fold its wake-ups into others.
+        poll = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in
             guard let self else { return }
             self.pollPointer(at: NSEvent.mouseLocation, buttons: NSEvent.pressedMouseButtons)
         }
+        poll!.tolerance = 0.05
         RunLoop.main.add(poll!, forMode: .common)
         clock = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in self?.tick() }
-        NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged]) { [weak self] _ in
+        clock!.tolerance = 0.2
+        // Presses too, so a drag's start is seen as it happens, not at the next poll.
+        NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged, .leftMouseDown, .leftMouseUp]) { [weak self] _ in
             self?.pollPointer(at: NSEvent.mouseLocation, buttons: NSEvent.pressedMouseButtons)
         }
-        NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged]) { [weak self] event in
+        NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged, .leftMouseDown, .leftMouseUp]) { [weak self] event in
             self?.pollPointer(at: NSEvent.mouseLocation, buttons: NSEvent.pressedMouseButtons); return event
         }
         NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
@@ -153,6 +157,12 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if !notch.expanded {
             notch.hovered = inside
             guard inside else { hoverSince = nil; return }
+            // A pointer that stops just inside sends no more events: look again once the dwell is up.
+            if hoverSince == nil {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.13) { [weak self] in
+                    self?.pollPointer(at: NSEvent.mouseLocation, buttons: NSEvent.pressedMouseButtons)
+                }
+            }
             let since = hoverSince ?? Date(); hoverSince = since
             // A short dwell, so a pointer crossing the menu bar doesn't open the office.
             // A question waiting keeps the island (as on Windows): Review opens it.
@@ -509,6 +519,8 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
             settings.model.receiveComputerUse(m)
         case "spaces":
             settings.model.receiveSpaces(m)
+        case "storage":
+            settings.model.receiveStorage(m)
         // An agent's call to Hover's browser (BrowserTool in the backend).
         case "browser": browsers.handle(m)
         case "quotas":

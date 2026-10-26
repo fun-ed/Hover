@@ -22,7 +22,7 @@ permission prompt has not been run by hand. The last section lists it.
 
 ## Build from source
 
-You need macOS 14 or later, Xcode's command line tools (`xcode-select --install`; full Xcode
+You need macOS 13 or later, Xcode's command line tools (`xcode-select --install`; full Xcode
 is not needed) and Go (the version `go.mod` names; an older Go fetches it). From the repo root:
 
 ```sh
@@ -139,6 +139,11 @@ that acts. Hover's hot keys are Carbon hot keys and the pointer is read with
   Settings
 →
 General has the switch, but the Mac Settings does not list what is missing.
+- The office web view can show a hosted page instead of the bundled one: set
+  `HOVER_OFFICE_URL` (or `defaults write dev.hover.desktop officeURL <url>`) to an http(s)
+  address, for example `http://localhost:4600`. The notch and the dashboard window both load
+  it. A hosted page has no Hover bridge: the island, menu bar and approvals still come from
+  the backend, but nothing Hover sends reaches the page.
 
 ## End-to-end run, in the background
 

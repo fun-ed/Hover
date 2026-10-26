@@ -169,15 +169,26 @@ final class Office: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
     var ready = false
     var lastState: [String: Any]?
     let dashboard: Bool
+    /// The page the office shows. A hosted office takes its place through the
+    /// HOVER_OFFICE_URL environment or `defaults write dev.hover.desktop officeURL`;
+    /// it gets no bridge, so backend messages queue in pending and stay undelivered.
+    let page: URL
+    var external: Bool { page.scheme != "hover" }
+    static func officeURL() -> URL {
+        let override = ProcessInfo.processInfo.environment["HOVER_OFFICE_URL"] ?? UserDefaults.standard.string(forKey: "officeURL")
+        if let value = override, let url = URL(string: value), ["http", "https"].contains(url.scheme ?? "") { return url }
+        return URL(string: "hover://office/kiro-office.html")!
+    }
     init(resources: URL, dataFolder: URL, dashboard: Bool) {
         self.dashboard = dashboard
+        page = Office.officeURL()
         files = LocalFiles(resources: resources, dataFolder: dataFolder)
         let config = WKWebViewConfiguration()
         if smoke { config.websiteDataStore = .nonPersistent() }
         // The notch never makes Hover the active app, and WebKit throttles the pages of an
         // inactive app's windows, which made the office and its live views stutter. Hover
         // pauses the page itself whenever it is out of sight ({type:'visible'}).
-        config.preferences.inactiveSchedulingPolicy = .none
+        if #available(macOS 14.0, *) { config.preferences.inactiveSchedulingPolicy = .none }
         config.setURLSchemeHandler(files, forURLScheme: "hover")
         let bridge = """
         (() => {
@@ -196,7 +207,7 @@ final class Office: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
         config.userContentController.add(self, name: "hover")
         web.navigationDelegate = self
         web.setValue(false, forKey: "drawsBackground")
-        web.load(URLRequest(url: URL(string: "hover://office/kiro-office.html")!))
+        web.load(URLRequest(url: page))
     }
     func userContentController(_ controller: WKUserContentController, didReceive event: WKScriptMessage) {
         guard event.frameInfo.isMainFrame, event.frameInfo.request.url?.scheme == "hover", event.frameInfo.request.url?.host == "office", var m = event.body as? [String: Any] else { return }
@@ -229,6 +240,8 @@ final class Office: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
         // to Hover: the bridge answers the main frame only.
         let frame = action.targetFrame.map { !$0.isMainFrame } ?? false
         let web = ["http", "https", "about"].contains(url?.scheme ?? "")
+        // A hosted office is the page itself: it navigates the main frame like a browser.
+        if external { decisionHandler(web ? .allow : .cancel); return }
         decisionHandler((url?.scheme == "hover" && url?.host == "office" && action.targetFrame != nil) || (frame && web) ? .allow : .cancel)
     }
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { ready = false; webView.reload() }

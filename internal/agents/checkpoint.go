@@ -159,6 +159,9 @@ func (c *Checkpoints) UndoTree(key string) (string, bool) {
 	return t, isID(t)
 }
 
+// Dir is where the stores are, one <key>.git each.
+func (c *Checkpoints) Dir() string { return c.dir }
+
 // Delete: a session was deleted, its checkpoints go with it.
 func (c *Checkpoints) Delete(key string) {
 	repo, err := c.repo(key)

@@ -186,14 +186,36 @@ func errKind(err error) string {
 // MARK: images.rs
 
 // KiroPage.ImagesFolder and SaveImages: pasted pictures kept as files in kiro-images,
-// for the agent to read and the office to show; files older than two weeks go the first
-// time the folder is asked for in a run.
+// for the agent to read and the office to show; files older than the days kept (two weeks
+// unless Settings → Storage says 7 or 30) go the first time the folder is asked for in a
+// run, and whenever the backend sweeps.
 
 const (
 	MaxImages     = 4
 	MaxImageBytes = 8 * 1024 * 1024
-	imagesKeep    = 14 * 24 * time.Hour
 )
+
+// KeepChoices are the days pasted images and attached files may be kept; 14 unless changed.
+var KeepChoices = []int{7, 14, 30}
+
+var keepDays atomic.Int64
+
+// SetKeepDays takes one of KeepChoices; anything else is ignored.
+func SetKeepDays(days int) {
+	for _, d := range KeepChoices {
+		if d == days {
+			keepDays.Store(int64(days))
+		}
+	}
+}
+
+// KeepDays is how many days attachments are kept.
+func KeepDays() int {
+	if d := keepDays.Load(); d > 0 {
+		return int(d)
+	}
+	return 14
+}
 
 var swept atomic.Bool
 
@@ -207,19 +229,41 @@ func ImagesFolder(support string) string {
 	return dir
 }
 
-// SweepImages deletes the files (not folders) last written more than 14 days before now.
+// SweepImages deletes the files (not folders) last written more than KeepDays before now.
 func SweepImages(dir string, now time.Time) {
+	SweepOlder(dir, now.AddDate(0, 0, -KeepDays()))
+}
+
+// SweepOlder deletes the files (not folders) last written before cut: how many, and their bytes.
+func SweepOlder(dir string, cut time.Time) (int, int64) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return
+		return 0, 0
 	}
-	cut := now.Add(-imagesKeep)
+	n, size := 0, int64(0)
 	for _, e := range entries {
 		info, err := e.Info()
-		if err == nil && info.Mode().IsRegular() && info.ModTime().Before(cut) {
-			os.Remove(filepath.Join(dir, e.Name()))
+		if err == nil && info.Mode().IsRegular() && info.ModTime().Before(cut) && os.Remove(filepath.Join(dir, e.Name())) == nil {
+			n++
+			size += info.Size()
 		}
 	}
+	return n, size
+}
+
+// Usage is a folder's size: its bytes and files, all the way down (0, 0 when it isn't there).
+func Usage(dir string) (int64, int) {
+	size, n := int64(0), 0
+	filepath.WalkDir(dir, func(_ string, d os.DirEntry, err error) error {
+		if err == nil && !d.IsDir() {
+			if info, err := d.Info(); err == nil {
+				size += info.Size()
+				n++
+			}
+		}
+		return nil
+	})
+	return size, n
 }
 
 // SaveImages saves a message's images, as data: URLs, into the folder. Only PNG, JPEG,
@@ -268,6 +312,74 @@ func SaveImages(items []JSON, dir string) []string {
 			Logf("kiro office: couldn't save a pasted image - %v", err)
 			continue
 		}
+		saved = append(saved, file)
+	}
+	return saved
+}
+
+// Files attached to a message besides pictures: kept whole in attachments (swept as
+// kiro-images is), named for the agent to read. Up to ten of 20 MiB, 50 MiB in all, so a
+// message stays under the host's line limit.
+const (
+	MaxFiles      = 10
+	MaxFileBytes  = 20 * 1024 * 1024
+	MaxFilesBytes = 50 * 1024 * 1024
+)
+
+var filesSwept atomic.Bool
+
+// AttachmentsFolder is the folder under the data folder, made if needed, swept once per run.
+func AttachmentsFolder(support string) string {
+	dir := filepath.Join(support, "attachments")
+	os.MkdirAll(dir, 0o755)
+	if !filesSwept.Swap(true) {
+		SweepImages(dir, time.Now())
+	}
+	return dir
+}
+
+// SaveFiles saves a message's files, each {name, data} with data a base64 data: URL, into
+// the folder under a unique prefix and the file's own name (its folder parts dropped).
+// Anything malformed, over a limit or past the tenth is skipped.
+func SaveFiles(items []JSON, dir string) []string {
+	var saved []string
+	total := 0
+	for _, item := range items {
+		if len(saved) >= MaxFiles {
+			break
+		}
+		nameV, _ := item.Get("name")
+		dataV, _ := item.Get("data")
+		name, _ := nameV.AsStr()
+		url, ok := dataV.AsStr()
+		comma := strings.IndexByte(url, ',')
+		if !ok || comma < 0 || !strings.HasPrefix(url, "data:") || !strings.HasSuffix(url[:comma], ";base64") {
+			continue
+		}
+		// A rough check before decoding (padding makes it a few bytes over); the exact one after.
+		if (len(url)-comma-1)/4*3 > MaxFileBytes+3 {
+			continue
+		}
+		b, ok := FromBase64(url[comma+1:])
+		if !ok || len(b) > MaxFileBytes || total+len(b) > MaxFilesBytes {
+			continue
+		}
+		name = strings.Map(func(r rune) rune {
+			if r < ' ' || strings.ContainsRune(`/\:`, r) {
+				return '_'
+			}
+			return r
+		}, filepath.Base(strings.ReplaceAll(name, "\\", "/")))
+		if name == "" || name == "." || name == ".." {
+			name = "file"
+		}
+		stamp := []rune(LocalCompact() + "-" + GUIDN())
+		file := filepath.Join(dir, string(stamp[:24])+"-"+name)
+		if err := os.WriteFile(file, b, 0o644); err != nil {
+			Logf("couldn't save an attached file - %v", err)
+			continue
+		}
+		total += len(b)
 		saved = append(saved, file)
 	}
 	return saved

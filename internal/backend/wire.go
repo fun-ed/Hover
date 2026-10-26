@@ -132,7 +132,8 @@ func jbool(b bool) core.JSON   { return core.JBool(b) }
 // lineLimit is what Program.cs refuses. A longer line is skipped, not treated as the
 // host dying: the Mac app quits when this process exits, and one oversized command
 // (a huge paste, a picture) must not do that.
-var lineLimit = 48 * 1024 * 1024
+// 128 MiB: a message's files (50 MiB, a third more as base64) and its four pictures.
+var lineLimit = 128 * 1024 * 1024
 
 var errLongLine = errors.New("host line too long")
 

@@ -209,6 +209,9 @@ func TestTheStateMessageIsTheFixturesBytes(t *testing.T) {
 		t.Fatal(err)
 	}
 	fx := jget(mustJSON(t, string(raw)), "state")
+	// The fixture lists the six tools; Oh My Pi (the Mac's only) came after it.
+	defer func(all []core.AgentTool) { core.AllTools = all }(core.AllTools)
+	core.AllTools = core.AllTools[:6]
 	dir := t.TempDir()
 	settings := core.LoadSettings(filepath.Join(dir, "settings.json"))
 	settings.SetAgentOffers(core.Kiro, []core.AcpOption{option("model", "model", [2]string{"auto", "Auto"}, [2]string{"claude-opus-5.5", "Claude Opus 5.5"}),

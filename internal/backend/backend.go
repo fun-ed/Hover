@@ -72,6 +72,7 @@ type Backend struct {
 	runtimes    []agents.Runtime
 	sessions    *agents.KiroSessions
 	maxRunning  *MaxRunning
+	disabled    *DisabledTools
 	desk        *agents.Desk
 	gh          *agents.GitHubCli
 	credentials *credentials
@@ -84,6 +85,8 @@ type Backend struct {
 	// was looked at.
 	spaceMu   sync.Mutex
 	spaceBusy map[string]time.Time
+	// swept is the last sweep of pasted images and attached files (sweepIfDue).
+	swept time.Time
 }
 
 // decodeKey is Convert.FromBase64String.
@@ -139,6 +142,7 @@ func newBackend(link *Link) (*Backend, error) {
 	settings := core.LoadSettings(core.SettingsFile())
 	history := core.NewAgentHistory(dir, crypto)
 	maxRun := LoadMaxRunning(filepath.Join(core.Support(), "backend.json"))
+	LoadKeepDays(storageFile())
 
 	var runtimes []agents.Runtime
 	for _, t := range core.AllTools {
@@ -219,6 +223,7 @@ func newBackend(link *Link) (*Backend, error) {
 	b := &Backend{
 		link: link, settings: settings, history: history, runtimes: runtimes, sessions: sessions, maxRunning: maxRun,
 		desk: agents.SharedDesk(), gh: gh, credentials: &credentials{}, browser: bh,
+		disabled:  LoadDisabledTools(filepath.Join(core.Support(), "agents.json")),
 		quotaStop: make(chan struct{}), idleStop: make(chan struct{}), spaceBusy: map[string]time.Time{},
 	}
 	go func() {
@@ -243,7 +248,7 @@ func newBackend(link *Link) (*Backend, error) {
 			case <-b.idleStop:
 				return
 			case <-t.C:
-				link.with(func(b *Backend) { b.stopIdleSpaces() })
+				link.with(func(b *Backend) { b.stopIdleSpaces(); b.sweepIfDue() })
 			}
 		}
 	}()
@@ -302,7 +307,7 @@ func (b *Backend) sendState() {
 func (b *Backend) ctx(sessions []agents.KiroSession, history []core.HistoryEntry) *ctx {
 	return &ctx{
 		settings: b.settings, sessions: sessions, history: history, canStart: b.canStart(), maxRunning: b.maxRunning.Get(),
-		checkpoints: b.sessions.Checkpoints() != nil, known: agents.Known,
+		checkpoints: b.sessions.Checkpoints() != nil, known: agents.Known, off: b.disabled.Off, firstOn: b.disabled.FirstOn,
 	}
 }
 
@@ -346,7 +351,8 @@ func (b *Backend) sendPreferences() {
 	tools := make([]core.JSON, len(core.AllTools))
 	for i, t := range core.AllTools {
 		o := s.AgentOptions(t)
-		tools[i] = core.JObj(core.P("id", jst(t.ID())), core.P("access", jst(o.AccessID(true))), core.P("idle", jint(int64(o.IdleMinutes))), core.P("hideSteps", jbool(o.HideSteps)))
+		tools[i] = core.JObj(core.P("id", jst(t.ID())), core.P("access", jst(o.AccessID(true))), core.P("idle", jint(int64(o.IdleMinutes))), core.P("hideSteps", jbool(o.HideSteps)),
+			core.P("enabled", jbool(!b.disabled.Off(t))))
 	}
 	b.link.out.Send(core.JObj(
 		core.P("type", jst("preferences")), core.P("maxRunning", jint(int64(b.maxRunning.Get()))), core.P("hover", jbool(s.HoverOpensWorkspace())),
@@ -569,6 +575,10 @@ func (b *Backend) check() {
 		defer func() { link.flags.checking.Store(false) }()
 		var wg sync.WaitGroup
 		for _, t := range core.AllTools {
+			// An agent switched off is not asked: no status command runs for it.
+			if b.disabled.Off(t) {
+				continue
+			}
 			wg.Add(1)
 			go func() { defer wg.Done(); agents.Check(t, true) }()
 		}
@@ -578,7 +588,9 @@ func (b *Backend) check() {
 		// What each tool offers (its models) is read once it is known to be ready, and the
 		// state goes out again when a tool's list arrives (OnOptionsSeen pushes).
 		for _, r := range b.runtimes {
-			r.Discover(false)
+			if !b.disabled.Off(r.Tool()) {
+				r.Discover(false)
+			}
 		}
 	}()
 }
@@ -635,6 +647,7 @@ func (b *Backend) handle(m core.JSON) error {
 		}
 		images := saveImages(m)
 		text, _ := strOf(m, "text")
+		text = withFiles(text, saveFiles(m))
 		if s == nil || !b.sessions.Reply(s.ID, text, images) {
 			return errors.New("Could not send this reply. A desk may be busy.")
 		}
@@ -769,6 +782,9 @@ func (b *Backend) handle(m core.JSON) error {
 		if b.settings.ComputerUse() {
 			b.spawn(func() { agents.CuaCheck(true) })
 		}
+	// Settings → Storage: what Hover's folder holds; a clean or a new keep-for first, if asked.
+	case "storage":
+		b.storage(m)
 	// Settings → Computer Use: what is known now, then a fresh check.
 	case "computerUse":
 		b.sendComputerUse()
@@ -828,7 +844,10 @@ func (b *Backend) start(m core.JSON) error {
 	folder := optStrOf(m, "folder")
 	tool, ok := core.ParseTool(optStrOf(m, "tool"))
 	if !ok {
-		tool = b.settings.AgentTool()
+		tool = b.disabled.FirstOn(b.settings.AgentTool())
+	}
+	if b.disabled.Off(tool) {
+		return fmt.Errorf("%s is switched off in Settings.", tool.Name())
 	}
 	if folder == nil || !agents.UsableFolder(*folder) {
 		return errors.New("Choose an existing project folder.")
@@ -852,6 +871,7 @@ func (b *Backend) start(m core.JSON) error {
 	b.settings.SetAgentTool(tool)
 	busy := !b.canStart()
 	prompt, _ := strOf(m, "prompt")
+	prompt = withFiles(prompt, saveFiles(m))
 	if busy {
 		return errors.New("All available desks are busy, or the prompt is empty.")
 	}
@@ -990,6 +1010,14 @@ func (b *Backend) savePreferences(m core.JSON) {
 				o.HideSteps = hide
 			}
 			s.SetAgentOptions(tool, o)
+			if on, ok := boolOf(t, "enabled"); ok {
+				was := b.disabled.Off(tool)
+				b.disabled.Set(tool, !on)
+				// Switched back on: it was never checked while off.
+				if was && on {
+					b.check()
+				}
+			}
 		}
 	}
 }
@@ -1041,6 +1069,149 @@ func guarded(f func() core.JSON, fallback string) (out core.JSON) {
 
 // saveImages is Backend.SaveImages: a message's pictures (data: URLs, or {data}), as files
 // for the agent.
+func storageFile() string { return filepath.Join(core.Support(), "storage.json") }
+
+// sweepIfDue deletes pasted images and attached files past their days, every six hours
+// (the minute timer asks), so a Hover left running keeps to them too.
+func (b *Backend) sweepIfDue() {
+	if time.Since(b.swept) < 6*time.Hour {
+		return
+	}
+	b.swept = time.Now()
+	cut := time.Now().AddDate(0, 0, -core.KeepDays())
+	core.SweepOlder(core.ImagesFolder(core.Support()), cut)
+	core.SweepOlder(core.AttachmentsFolder(core.Support()), cut)
+}
+
+// storage is Settings → Storage. keepDays sets how long attachments are kept (and sweeps);
+// clean, with days (0 for everything), deletes: "attachments" (pasted images and attached
+// files), "checkpoints" (of chats not open and not updated in that time; their Restore
+// goes) or "log". Chat history is only reported. Then it says what each holds.
+func (b *Backend) storage(m core.JSON) {
+	if d, ok := intOf(m, "keepDays"); ok {
+		SaveKeepDays(storageFile(), int(d))
+		b.swept = time.Time{}
+		b.sweepIfDue()
+	}
+	days, _ := intOf(m, "days")
+	cut := time.Now().AddDate(0, 0, -int(days))
+	freed := int64(0)
+	switch what, _ := strOf(m, "clean"); what {
+	case "attachments":
+		_, a := core.SweepOlder(core.ImagesFolder(core.Support()), cut)
+		_, f := core.SweepOlder(core.AttachmentsFolder(core.Support()), cut)
+		freed = a + f
+	case "checkpoints":
+		freed = b.cleanCheckpoints(cut)
+	case "log":
+		for _, f := range []string{core.LogFile(), core.LogFile() + ".1"} {
+			if info, err := os.Stat(f); err == nil && os.Remove(f) == nil {
+				freed += info.Size()
+			}
+		}
+	}
+	item := func(id string, dirs ...string) core.JSON {
+		size, n := int64(0), 0
+		for _, d := range dirs {
+			s, k := core.Usage(d)
+			size, n = size+s, n+k
+		}
+		return core.JObj(core.P("id", jst(id)), core.P("bytes", jint(size)), core.P("files", jint(int64(n))))
+	}
+	logSize := int64(0)
+	for _, f := range []string{core.LogFile(), core.LogFile() + ".1"} {
+		if info, err := os.Stat(f); err == nil {
+			logSize += info.Size()
+		}
+	}
+	choices := make([]core.JSON, len(core.KeepChoices))
+	for i, d := range core.KeepChoices {
+		choices[i] = jint(int64(d))
+	}
+	b.link.out.Send(core.JObj(core.P("type", jst("storage")), core.P("keepDays", jint(int64(core.KeepDays()))),
+		core.P("choices", core.JArr(choices...)), core.P("freed", jint(freed)), core.P("items", core.JArr(
+			item("attachments", core.ImagesFolder(core.Support()), core.AttachmentsFolder(core.Support())),
+			item("checkpoints", filepath.Join(core.Support(), "checkpoints")),
+			core.JObj(core.P("id", jst("log")), core.P("bytes", jint(logSize))),
+			item("history", core.AgentsDir()),
+		))))
+}
+
+// cleanCheckpoints deletes the checkpoints of chats updated before cut, never those of a
+// chat on a desk now; a store whose chat is gone from the history goes too. Its bytes.
+func (b *Backend) cleanCheckpoints(cut time.Time) int64 {
+	cp := b.sessions.Checkpoints()
+	if cp == nil {
+		return 0
+	}
+	open := map[string]bool{}
+	for _, s := range b.sessions.All() {
+		open[s.Key] = true
+	}
+	updated := map[string]time.Time{}
+	for _, e := range b.history.Entries() {
+		updated[e.Key] = time.UnixMilli(e.Updated.UnixMS())
+	}
+	var stores []string
+	if entries, err := os.ReadDir(cp.Dir()); err == nil {
+		for _, e := range entries {
+			if e.IsDir() {
+				stores = append(stores, e.Name())
+			}
+		}
+	}
+	freed := int64(0)
+	for _, key := range staleCheckpoints(stores, open, updated, cut) {
+		size, _ := core.Usage(filepath.Join(cp.Dir(), key+".git"))
+		cp.Delete(key)
+		freed += size
+	}
+	return freed
+}
+
+// staleCheckpoints are the keys of the stores (<key>.git) to delete: not a chat open now,
+// and its chat updated before cut or gone from the history.
+func staleCheckpoints(stores []string, open map[string]bool, updated map[string]time.Time, cut time.Time) []string {
+	var out []string
+	for _, name := range stores {
+		key, ok := strings.CutSuffix(name, ".git")
+		if !ok || open[key] {
+			continue
+		}
+		if t, known := updated[key]; known && !t.Before(cut) {
+			continue
+		}
+		out = append(out, key)
+	}
+	return out
+}
+
+// saveFiles keeps a message's other files (the office's files: [{name, data}]).
+func saveFiles(m core.JSON) []string {
+	v, ok := m.Get("files")
+	if !ok || v.Kind() != core.ArrKind {
+		return nil
+	}
+	items, _ := v.Items()
+	return core.SaveFiles(items, core.AttachmentsFolder(core.Support()))
+}
+
+// withFiles names each saved file on a line of its own after the text, for the agent to
+// read (an ACP agent also gets each as a resource; acp.go, AttachedFile).
+func withFiles(text string, files []string) string {
+	if len(files) == 0 {
+		return text
+	}
+	lines := make([]string, len(files))
+	for i, f := range files {
+		lines[i] = agents.AttachedFile + f
+	}
+	if strings.TrimSpace(text) == "" {
+		text = "Look at the attached files."
+	}
+	return text + "\n\n" + strings.Join(lines, "\n")
+}
+
 func saveImages(m core.JSON) []string {
 	v, ok := m.Get("images")
 	if !ok || v.Kind() != core.ArrKind {

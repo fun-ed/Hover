@@ -10,10 +10,14 @@ package agents
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/base64"
 	"fmt"
 	"io"
+	"mime"
+	"net/url"
 	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -21,6 +25,7 @@ import (
 	"sync/atomic"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/4regab/Hover/internal/core"
 )
@@ -45,6 +50,13 @@ const (
 // Attached is how a pasted picture's line in a prompt begins (KiroTurn.Text), then its file.
 const Attached = "Attached image (read it from this file): "
 
+// AttachedFile begins an attached file's line (any file but a picture), then its path.
+const AttachedFile = "Attached file (read it from this file): "
+
+// embedMax: a text file up to this size goes inside the prompt to an agent that takes
+// embedded context; a bigger or binary one goes as a link to the file.
+const embedMax = 256 * 1024
+
 // The most a picture may be, and how many go with one prompt (Kiro's own limits).
 const (
 	imageMax  = 10 * 1024 * 1024
@@ -56,18 +68,27 @@ const (
 // files, sees it too) and the text without those lines. A picture that can't be sent
 // (gone, too big, past the tenth, or the agent takes none) stays a line naming its file,
 // which an agent on this computer can still read.
-func promptBlocks(prompt string, images bool) core.JSON {
+//
+// Each attached file also goes as a block of its own, its line kept: a resource with its
+// text when it is a small text file and the agent takes embedded context (embed), else a
+// resource_link, which every ACP agent takes.
+func promptBlocks(prompt string, images, embed bool) core.JSON {
 	text := func(t string) core.JSON {
 		return core.JObj(core.P("type", core.JStr("text")), core.P("text", core.JStr(strings.TrimSpace(t))))
 	}
-	if !images || !strings.Contains(prompt, Attached) {
+	if !strings.Contains(prompt, AttachedFile) && (!images || !strings.Contains(prompt, Attached)) {
 		return core.JArr(text(prompt))
 	}
 	var kept []string
-	var pics []core.JSON
+	var pics, files []core.JSON
 	for _, line := range rustLines(prompt) {
+		if p, ok := strings.CutPrefix(line, AttachedFile); ok {
+			kept = append(kept, line)
+			files = append(files, fileBlock(p, embed))
+			continue
+		}
 		var pic *core.JSON
-		if p, ok := strings.CutPrefix(line, Attached); ok && len(pics) < imagesMax {
+		if p, ok := strings.CutPrefix(line, Attached); ok && images && len(pics) < imagesMax {
 			pic = imageBlock(p)
 		}
 		if pic != nil {
@@ -76,7 +97,66 @@ func promptBlocks(prompt string, images bool) core.JSON {
 			kept = append(kept, line)
 		}
 	}
-	return core.JArr(append([]core.JSON{text(strings.Join(kept, "\n"))}, pics...)...)
+	return core.JArr(append(append([]core.JSON{text(strings.Join(kept, "\n"))}, pics...), files...)...)
+}
+
+// attachedName is a saved file's own name, less the prefix Hover saved it under (SaveFiles).
+func attachedName(p string) string {
+	name := filepath.Base(p)
+	if len(name) > 25 && name[24] == '-' {
+		return name[25:]
+	}
+	return name
+}
+
+// attachedKind is a file's MIME type by its extension, without parameters; "" when unknown.
+func attachedKind(p string) string {
+	kind, _, _ := strings.Cut(mime.TypeByExtension(filepath.Ext(p)), ";")
+	return kind
+}
+
+// smallText is a file's contents when it is text (UTF-8, no NUL) of up to embedMax.
+func smallText(p string) ([]byte, bool) {
+	if fi, err := os.Stat(p); err != nil || fi.Size() > embedMax {
+		return nil, false
+	}
+	b, err := os.ReadFile(p)
+	return b, err == nil && utf8.Valid(b) && !bytes.Contains(b, []byte{0})
+}
+
+// fileBlock is an attached file as a resource (a small text file, when embed) or a
+// resource_link, named as the user's file was (its saved name less Hover's prefix).
+func fileBlock(p string, embed bool) core.JSON {
+	uri := (&url.URL{Scheme: "file", Path: p}).String()
+	name, kind := attachedName(p), attachedKind(p)
+	fi, err := os.Stat(p)
+	if embed && err == nil && fi.Size() <= embedMax {
+		if b, ok := smallText(p); ok {
+			if kind == "" {
+				kind = "text/plain"
+			}
+			return core.JObj(core.P("type", core.JStr("resource")), core.P("resource", core.JObj(
+				core.P("uri", core.JStr(uri)), core.P("mimeType", core.JStr(kind)), core.P("text", core.JStr(string(b))))))
+		}
+	}
+	link := []core.Prop{core.P("type", core.JStr("resource_link")), core.P("uri", core.JStr(uri)), core.P("name", core.JStr(name))}
+	if kind != "" {
+		link = append(link, core.P("mimeType", core.JStr(kind)))
+	}
+	if err == nil {
+		link = append(link, core.P("size", core.JInt(fi.Size())))
+	}
+	return core.JObj(link...)
+}
+
+// sendsImages: the agents whose pictures go as image blocks when they take them (Kiro, and
+// Codex, Oh My Pi and Devin, which say promptCapabilities.image); the others get the file's line.
+func sendsImages(t core.AgentTool) bool {
+	switch t {
+	case core.Kiro, core.Codex, core.Omp, core.OmpOpus, core.OmpSol, core.Devin:
+		return true
+	}
+	return false
 }
 
 func imageBlock(p string) *core.JSON {
@@ -332,6 +412,8 @@ type AcpHost struct {
 	// (promptCapabilities.image). canList: the agent lists its sessions
 	// (sessionCapabilities.list).
 	canCloud, canImage, canList atomic.Bool
+	// canEmbed: the agent takes embedded resources in a prompt (promptCapabilities.embeddedContext).
+	canEmbed atomic.Bool
 	// canDelete and canClose: the agent can delete or close a session it made
 	// (sessionCapabilities.delete, .close), which discovery uses to leave nothing behind.
 	canDelete, canClose atomic.Bool
@@ -769,8 +851,8 @@ func (h *AcpHost) turn(folder, prompt string, ct *Cancel, resume *string, o core
 		return NewResult(core.Completed, "Compacted the conversation."), nil
 	}
 
-	images := h.tool == core.Kiro && h.canImage.Load()
-	params := core.JObj(core.P("sessionId", core.JStr(id)), core.P("prompt", promptBlocks(prompt, images)))
+	images := sendsImages(h.tool) && h.canImage.Load()
+	params := core.JObj(core.P("sessionId", core.JStr(id)), core.P("prompt", promptBlocks(prompt, images, h.canEmbed.Load())))
 	_, ch, err := h.beginCall("session/prompt", params)
 	if err != nil {
 		return KiroResult{}, err
@@ -1400,6 +1482,29 @@ func (h *AcpHost) configure(sid string, offered []core.AcpOption, o core.AgentOp
 			mode = "yolo"
 		}
 		err = set(findOption(offered, "mode", "mode"), &mode)
+	case core.Omp, core.OmpOpus, core.OmpSol:
+		// Oh My Pi: "plan" is its read-only mode (it drafts a plan, changes no code);
+		// "default" otherwise, where Hover's rules decide what it asks.
+		mode := "default"
+		if o.ReadOnly {
+			mode = "plan"
+		}
+		err = set(findOption(offered, "mode", "mode"), &mode)
+	case core.Devin:
+		// Devin's modes: bypass never asks; accept-edits makes edits in the folder and asks
+		// for the rest (Ask first); ask asks for everything (Ask always); plan changes
+		// nothing (Read only). "smart", its own judge of what is safe, is not used: Hover
+		// would rarely hear of what it lets through.
+		mode := "accept-edits"
+		switch {
+		case o.ReadOnly:
+			mode = "plan"
+		case !asks:
+			mode = "bypass"
+		case o.Approval == core.Always:
+			mode = "ask"
+		}
+		err = set(findOption(offered, "mode", "mode"), &mode)
 	}
 	// OpenCode and Claude Code run their own ways (opencode.go, claude.go), never as ACP
 	// servers; Custom (only old chats have it) has no host.
@@ -1623,6 +1728,7 @@ func (h *AcpHost) start(ct *Cancel) *callErr {
 	items, _ := targets.Items()
 	h.canCloud.Store(slices.ContainsFunc(items, func(x core.JSON) bool { s, ok := x.AsStr(); return ok && s == "cloud-sandbox" }))
 	h.canImage.Store(isTrue(at(caps, "promptCapabilities", "image")))
+	h.canEmbed.Store(isTrue(at(caps, "promptCapabilities", "embeddedContext")))
 	list, ok := at(caps, "sessionCapabilities", "list")
 	if f, err := list.Bool(); ok && !list.IsNull() && (err != nil || f) {
 		h.canList.Store(true)

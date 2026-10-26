@@ -24,7 +24,7 @@ final class SpaceViewers: NSObject, WKNavigationDelegate, WKUIDelegate {
                 config.websiteDataStore = .nonPersistent()
                 config.mediaTypesRequiringUserActionForPlayback = []
                 // A live desktop: never throttled for Hover not being the active app.
-                config.preferences.inactiveSchedulingPolicy = .none
+                if #available(macOS 14.0, *) { config.preferences.inactiveSchedulingPolicy = .none }
                 let web = WKWebView(frame: .zero, configuration: config)
                 web.navigationDelegate = self; web.uiDelegate = self
                 web.setValue(false, forKey: "drawsBackground")

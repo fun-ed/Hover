@@ -4,7 +4,10 @@ package core
 // Services/Agents.cs, Services/AcpHost.cs, Core/Palette.cs, Core/Settings.cs), with
 // their JSON in declaration order, as the serializer writes records.
 
-import "errors"
+import (
+	"errors"
+	"runtime"
+)
 
 // reader reads an object's properties and keeps the first error, so a record's read
 // is one line per field, as the Rust is. Any value of the wrong kind fails the record.
@@ -134,20 +137,35 @@ const (
 	Claude
 	Custom
 	Agy
+	// Oh My Pi's ACP server (omp acp), on its default profile and on the opus and sol ones
+	// (omp --profile=<name>): three agents, so each has its own models, access and desks.
+	Omp
+	OmpOpus
+	OmpSol
+	// Cognition's Devin CLI, run as its local ACP server (devin acp).
+	Devin
 )
 
 // AllTools are the six Hover ships, which every per-tool list and page goes through.
 var AllTools = []AgentTool{Kiro, Codex, Cursor, OpenCode, Claude, Agy}
 
+// Oh My Pi and Devin are on the Mac only: the Windows and Linux app have a page of their own for each
+// tool (internal/app), and none for it.
+func init() {
+	if runtime.GOOS == "darwin" {
+		AllTools = append(AllTools, Omp, OmpOpus, OmpSol, Devin)
+	}
+}
+
 // Claude Code is new in 3.x, so its saved name can be its product's (2.x never wrote one).
-var toolNames = []string{"Kiro", "Codex", "Cursor", "OpenCode", "Claude Code", "Custom", "Antigravity"}
+var toolNames = []string{"Kiro", "Codex", "Cursor", "OpenCode", "Claude Code", "Custom", "Antigravity", "Oh My Pi", "Oh My Pi (opus)", "Oh My Pi (sol)", "Devin"}
 
 // Name is Agents.Name: the enum's name.
 func (t AgentTool) Name() string { return toolNames[t] }
 
 // ID is Agents.Id: the name in lower case (Antigravity's is its command's, "agy").
 func (t AgentTool) ID() string {
-	return []string{"kiro", "codex", "cursor", "opencode", "claude", "custom", "agy"}[t]
+	return []string{"kiro", "codex", "cursor", "opencode", "claude", "custom", "agy", "omp", "omp-opus", "omp-sol", "devin"}[t]
 }
 
 // ParseTool is Agents.Parse: the exact id, or none. Only the six Hover ships.

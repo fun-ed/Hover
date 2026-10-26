@@ -4,13 +4,50 @@ import ServiceManagement
 import UserNotifications
 import AVFoundation
 import Speech
+import WebKit
 
 // Settings, as a Mac window: a sidebar of Get Started, General, Usage, Computer Use
 // and one page per agent. Every change applies at once (no Save). The backend is the source of
 // truth; replies that were asked for before the latest change are not shown, so a
 // slow echo can't undo a click (the old window's feedback-loop bug).
 
-struct ToolPrefs: Equatable { var access = "full"; var idle = 5; var hideSteps = false }
+struct ToolPrefs: Equatable { var access = "full"; var idle = 5; var hideSteps = false; var enabled = true }
+
+/// Settings → Storage: what Hover's folder holds (the backend's storage message), and the
+/// office's web cache, which only the Mac app can see.
+struct StorageStatus: Equatable {
+    var keepDays = 14, choices = [7, 14, 30]
+    var bytes: [String: Int64] = [:], files: [String: Int] = [:]
+    var webBytes: Int64 = 0
+    var freed: Int64?
+    var checked = false
+
+    init() {}
+    init(_ m: [String: Any], web: Int64) {
+        keepDays = m["keepDays"] as? Int ?? 14
+        choices = m["choices"] as? [Int] ?? [7, 14, 30]
+        for i in m["items"] as? [[String: Any]] ?? [] {
+            guard let id = i["id"] as? String else { continue }
+            bytes[id] = (i["bytes"] as? NSNumber)?.int64Value ?? 0
+            files[id] = i["files"] as? Int
+        }
+        webBytes = web
+        freed = (m["freed"] as? NSNumber)?.int64Value
+        checked = true
+    }
+
+    /// The office's WebKit caches: its own folders under ~/Library.
+    static func webCacheBytes() -> Int64 {
+        let fm = FileManager.default, lib = fm.homeDirectoryForCurrentUser.appendingPathComponent("Library")
+        let id = Bundle.main.bundleIdentifier ?? "dev.hover.desktop"
+        var total: Int64 = 0
+        for dir in [lib.appendingPathComponent("Caches/\(id)"), lib.appendingPathComponent("WebKit/\(id)")] {
+            guard let e = fm.enumerator(at: dir, includingPropertiesForKeys: [.fileSizeKey]) else { continue }
+            for case let u as URL in e { total += Int64((try? u.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0) }
+        }
+        return total
+    }
+}
 
 /// Cua Spaces, the agents' own desktops, as the backend's spaces message reports them.
 struct SpacesStatus: Equatable {
@@ -120,7 +157,7 @@ struct ToolStatus: Equatable {
 }
 
 final class SettingsModel: ObservableObject {
-    enum Page: Hashable { case start, general, usage, computerUse, voice, tool(String) }
+    enum Page: Hashable { case start, general, usage, computerUse, voice, storage, tool(String) }
     @Published var page: Page = .start
     @Published var hover = true
     @Published var noticeSeen = false
@@ -133,6 +170,7 @@ final class SettingsModel: ObservableObject {
     @Published var kiroCompactAt = 80
     @Published var spaces = SpacesStatus()
     @Published var cua = CuaStatus()
+    @Published var storage = StorageStatus()
     @Published var maxRunning = 3
     @Published var quotaItems: [String] = []
     @Published var prefs: [String: ToolPrefs] = [:]
@@ -156,7 +194,7 @@ final class SettingsModel: ObservableObject {
     private(set) var outstanding = 0
     private(set) var hasPreferences = false
 
-    static let order = ["codex", "kiro", "cursor", "opencode", "claude", "agy"]
+    static let order = ["codex", "kiro", "cursor", "opencode", "claude", "agy", "omp", "omp-opus", "omp-sol", "devin"]
     static let defaultTools = order.map { ToolStatus(id: $0, name: Marks.name($0)) }
 
     init() {
@@ -188,7 +226,7 @@ final class SettingsModel: ObservableObject {
         var p: [String: ToolPrefs] = [:]
         for t in m["tools"] as? [[String: Any]] ?? [] {
             guard let id = t["id"] as? String else { continue }
-            p[id] = ToolPrefs(access: t["access"] as? String ?? "full", idle: t["idle"] as? Int ?? 5, hideSteps: t["hideSteps"] as? Bool ?? false)
+            p[id] = ToolPrefs(access: t["access"] as? String ?? "full", idle: t["idle"] as? Int ?? 5, hideSteps: t["hideSteps"] as? Bool ?? false, enabled: t["enabled"] as? Bool ?? true)
         }
         prefs = p
         return true
@@ -219,6 +257,14 @@ final class SettingsModel: ObservableObject {
     func checkComputerUse() { send(["type": "computerUse"]) }
     func cuaSetup(_ step: String) { send(["type": "computerUseSetup", "step": step]) }
     func receiveComputerUse(_ m: [String: Any]) { let next = CuaStatus(m); if next != cua { cua = next } }
+    /// Settings → Storage: what each part of Hover's folder holds, after a clean or a new keep-for if given.
+    func checkStorage(_ extra: [String: Any] = [:]) { send(extra.merging(["type": "storage"]) { a, _ in a }) }
+    func receiveStorage(_ m: [String: Any]) { storage = StorageStatus(m, web: StorageStatus.webCacheBytes()) }
+    /// The office's cached files only; its saved camera and other page settings (local storage) stay.
+    func clearWebCache() {
+        let kinds: Set<String> = [WKWebsiteDataTypeDiskCache, WKWebsiteDataTypeMemoryCache, WKWebsiteDataTypeFetchCache, WKWebsiteDataTypeOfflineWebApplicationCache]
+        WKWebsiteDataStore.default().removeData(ofTypes: kinds, modifiedSince: .distantPast) { [weak self] in self?.checkStorage() }
+    }
     func receiveSpaces(_ m: [String: Any]) { let next = SpacesStatus(m); if next != spaces { spaces = next } }
     func setSpaces(_ on: Bool) { spaces.on = on; request(["type": "saveSettings", "agentSpaces": on]); send(["type": "spaces"]) }
     func setSpaceImage(_ image: String) { spaces.image = image; request(["type": "saveSettings", "spaceImage": image]); send(["type": "spaces"]) }
@@ -231,7 +277,7 @@ final class SettingsModel: ObservableObject {
     }
     func setPref(_ id: String, _ change: (inout ToolPrefs) -> Void) {
         var p = pref(id); change(&p); prefs[id] = p
-        request(["type": "saveSettings", "tools": [["id": id, "access": p.access, "idle": p.idle, "hideSteps": p.hideSteps] as [String: Any]]])
+        request(["type": "saveSettings", "tools": [["id": id, "access": p.access, "idle": p.idle, "hideSteps": p.hideSteps, "enabled": p.enabled] as [String: Any]]])
     }
     func setLogin(_ on: Bool) {
         guard !smoke else { login = on; return }
@@ -354,6 +400,11 @@ private struct SetupButton: View {
 private struct ToolCard: View {
     @ObservedObject var model: SettingsModel
     let id: String
+    // .background.secondary is macOS 14+; 13 gets the nearest system colour.
+    static var cardFill: AnyShapeStyle {
+        if #available(macOS 14.0, *) { return AnyShapeStyle(.background.secondary) }
+        return AnyShapeStyle(Color(nsColor: .controlBackgroundColor))
+    }
     var body: some View {
         let s = model.status(id)
         HStack(spacing: 14) {
@@ -370,7 +421,7 @@ private struct ToolCard: View {
             SetupButton(model: model, id: id)
         }
         .padding(14)
-        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(.background.secondary))
+        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Self.cardFill))
         .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(.separator.opacity(0.6)))
         .contentShape(Rectangle())
         .onTapGesture(count: 2) { model.page = .tool(id) }
@@ -388,6 +439,7 @@ struct SettingsView: View {
                     Label("Usage", systemImage: "gauge.with.dots.needle.33percent").tag(SettingsModel.Page.usage)
                     Label("Computer Use", systemImage: "cursorarrow.rays").tag(SettingsModel.Page.computerUse)
                     Label("Voice", systemImage: "waveform").tag(SettingsModel.Page.voice)
+                    Label("Storage", systemImage: "internaldrive").tag(SettingsModel.Page.storage)
                 }
                 Section("Agents") {
                     ForEach(model.tools, id: \.id) { t in
@@ -395,8 +447,10 @@ struct SettingsView: View {
                             Logo(id: t.id, size: 18)
                             Text(t.name)
                             Spacer()
-                            if t.phase != .ready { StatusDot(status: t).imageScale(.small).controlSize(.mini) }
+                            if !model.pref(t.id).enabled { Text("Off").font(.caption).foregroundStyle(.secondary) }
+                            else if t.phase != .ready { StatusDot(status: t).imageScale(.small).controlSize(.mini) }
                         }
+                        .opacity(model.pref(t.id).enabled ? 1 : 0.5)
                         .tag(SettingsModel.Page.tool(t.id))
                     }
                 }
@@ -410,6 +464,7 @@ struct SettingsView: View {
                 case .usage: UsagePage(model: model)
                 case .computerUse: ComputerUsePage(model: model)
                 case .voice: VoicePage(model: model)
+                case .storage: StoragePage(model: model)
                 case .tool(let id): ToolPage(model: model, id: id)
                 }
             }
@@ -429,7 +484,7 @@ private struct StartPage: View {
                         .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
                 VStack(spacing: 10) {
-                    ForEach(model.tools.filter { $0.id != "opencode" }, id: \.id) { ToolCard(model: model, id: $0.id) }
+                    ForEach(model.tools.filter { $0.id != "opencode" && model.pref($0.id).enabled }, id: \.id) { ToolCard(model: model, id: $0.id) }
                 }
                 GroupBox {
                     VStack(alignment: .leading, spacing: 8) {
@@ -515,6 +570,64 @@ private struct UsagePage: View {
 }
 
 /// Cua Driver for the agents: on or off, installed, and CuaDriver's grants.
+/// Hover's own files: how long attachments are kept, what each part holds, and cleaning now.
+/// Chat history is shown, never deleted here (a chat is deleted from the office).
+private struct StoragePage: View {
+    @ObservedObject var model: SettingsModel
+    @State private var olderThan = 14
+    @State private var asking: (String, String)?
+    static func size(_ b: Int64) -> String { ByteCountFormatter.string(fromByteCount: b, countStyle: .file) }
+
+    var body: some View {
+        let st = model.storage
+        Form {
+            Section {
+                Picker("Keep pasted images and attached files for", selection: Binding(get: { st.keepDays }, set: { model.checkStorage(["keepDays": $0]) })) {
+                    ForEach(st.choices, id: \.self) { Text("\($0) days").tag($0) }
+                }
+            } header: { Text("Automatic cleanup") } footer: {
+                Text("Older ones are deleted on their own, every few hours while Hover runs. An agent can no longer read a file once it is gone; the chat keeps its message.")
+                    .foregroundStyle(.secondary)
+            }
+            Section {
+                Picker("Clean files older than", selection: $olderThan) {
+                    Text("7 days").tag(7); Text("14 days").tag(14); Text("30 days").tag(30); Text("Any age").tag(0)
+                }
+                row("Pasted images and attached files", "attachments", detail: st.files["attachments"].map { "\($0) files" }) {
+                    asking = ("attachments", olderThan == 0 ? "Delete every pasted image and attached file?" : "Delete pasted images and attached files older than \(olderThan) days?")
+                }
+                row("Checkpoints", "checkpoints", detail: "Restore and Try again of older chats") {
+                    asking = ("checkpoints", olderThan == 0 ? "Delete the checkpoints of every chat not open now? Their Restore and Try again stop working." : "Delete the checkpoints of chats not updated in \(olderThan) days? Their Restore and Try again stop working.")
+                }
+                row("Log", "log", detail: "hover.log, kept under 10 MB") { model.checkStorage(["clean": "log"]) }
+                LabeledContent("Office web cache") {
+                    HStack { Text(Self.size(st.webBytes)).foregroundStyle(.secondary); Button("Clear") { model.clearWebCache() } }
+                }
+                LabeledContent("Chat history") { Text(Self.size(st.bytes["history"] ?? 0)).foregroundStyle(.secondary) }
+            } header: { Text("Space used") } footer: {
+                if let f = st.freed, f > 0 { Text("Freed \(Self.size(f)).").foregroundStyle(.secondary) }
+                else { Text("Chat history is deleted a chat at a time, in the office.").foregroundStyle(.secondary) }
+            }
+        }
+        .formStyle(.grouped)
+        .onAppear { olderThan = model.storage.keepDays; model.checkStorage() }
+        .confirmationDialog(asking?.1 ?? "", isPresented: Binding(get: { asking != nil }, set: { if !$0 { asking = nil } })) {
+            Button("Delete", role: .destructive) { if let a = asking { model.checkStorage(["clean": a.0, "days": olderThan]) }; asking = nil }
+        }
+    }
+
+    private func row(_ title: String, _ id: String, detail: String?, clean: @escaping () -> Void) -> some View {
+        LabeledContent {
+            HStack { Text(Self.size(model.storage.bytes[id] ?? 0)).foregroundStyle(.secondary); Button("Clean", action: clean) }
+        } label: {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                if let detail { Text(detail).font(.caption).foregroundStyle(.secondary) }
+            }
+        }
+    }
+}
+
 private struct ComputerUsePage: View {
     /// hover_agents::spaces::UNSUPPORTED, for the moment before the backend's own line arrives.
     static let spacesUnsupported = "Agent desktops need macOS 26 or later on Apple silicon."
@@ -664,6 +777,16 @@ private struct ToolPage: View {
                     SetupButton(model: model, id: id)
                 }
                 .padding(.vertical, 4)
+            }
+            Section {
+                // One agent stays on, so the office always has one to start.
+                let last = p.enabled && model.tools.filter { model.pref($0.id).enabled }.count <= 1
+                Toggle("Use \(s.name) in Hover", isOn: Binding(get: { p.enabled }, set: { v in model.setPref(id) { $0.enabled = v } }))
+                    .toggleStyle(.switch)
+                    .disabled(last)
+            } footer: {
+                Text("Off: it leaves the office's and voice's agent lists, and Hover never checks or starts it. Its past chats stay.")
+                    .foregroundStyle(.secondary)
             }
             Section {
                 Picker("Tool access", selection: Binding(get: { p.access }, set: { v in model.setPref(id) { $0.access = v } })) {

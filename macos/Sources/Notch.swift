@@ -92,7 +92,7 @@ final class Notch: NSObject {
     private(set) var geometry: NotchGeometry
     private weak var web: NSView?
     private var current: [CGFloat] = [180, 32, 0, 10], velocity: [CGFloat] = [0, 0, 0, 0], target: [CGFloat] = [180, 32, 0, 10]
-    private var link: CADisplayLink?, lastTime: CFTimeInterval = 0, bouncy = false
+    private var stopLink: (() -> Void)?, lastTime: CFTimeInterval = 0, bouncy = false
     private static let margin: CGFloat = 40
 
     var expanded: Bool { window.expanded }
@@ -180,15 +180,25 @@ final class Notch: NSObject {
         target = (window.expanded ? openOutline() : rest()).values
         bouncy = window.expanded
         if !animated { current = target; velocity = [0, 0, 0, 0]; apply(); settle(); return }
-        if link == nil {
-            let l = root.displayLink(target: self, selector: #selector(step(_:)))
-            l.add(to: .main, forMode: .common)
-            link = l; lastTime = 0
+        if stopLink == nil {
+            lastTime = 0
+            if #available(macOS 14.0, *) {
+                let l = root.displayLink(target: self, selector: #selector(step(_:)))
+                l.add(to: .main, forMode: .common)
+                stopLink = { l.invalidate() }
+            } else {
+                // macOS 13 has no NSView display link; a 60 Hz timer drives the same spring.
+                let t = Timer(timeInterval: 1.0 / 60, repeats: true) { [weak self] _ in self?.tick(CACurrentMediaTime()) }
+                RunLoop.main.add(t, forMode: .common)
+                stopLink = { t.invalidate() }
+            }
         }
     }
 
-    @objc private func step(_ l: CADisplayLink) {
-        let now = l.timestamp
+    @available(macOS 14.0, *)
+    @objc private func step(_ l: CADisplayLink) { tick(l.timestamp) }
+
+    private func tick(_ now: CFTimeInterval) {
         let dt = lastTime == 0 ? 1.0 / 60 : min(1.0 / 30, max(1.0 / 240, now - lastTime))
         lastTime = now
         // A spring per value: a little bounce opening, none folding (the Dynamic Island feel).
@@ -201,7 +211,7 @@ final class Notch: NSObject {
         }
         if !moving { current = target; velocity = [0, 0, 0, 0] }
         apply()
-        if !moving { link?.invalidate(); link = nil; settle() }
+        if !moving { stopLink?(); stopLink = nil; settle() }
     }
 
     private func settle() {
@@ -351,8 +361,8 @@ final class IslandView: NSView {
             cg.setStrokeColor(Marks.accent(state.tools.first ?? "kiro").cgColor)
             cg.addArc(center: c, radius: 5.5, startAngle: a, endAngle: a + 1.9, clockwise: false); cg.strokePath()
             cg.restoreGState()
-            // Keep spinning while visible; the backend only reports changes.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0 / 30) { [weak self] in
+            // Keep spinning while visible (20 fps is smooth for a 16 pt ring); the backend only reports changes.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0 / 20) { [weak self] in
                 guard let self, self.state.kind == .working, !self.isHiddenOrHasHiddenAncestor, self.window?.isVisible == true else { return }
                 self.setNeedsDisplay(CGRect(x: c.x - 8, y: c.y - 8, width: 16, height: 16))
             }

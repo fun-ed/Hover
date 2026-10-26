@@ -134,9 +134,35 @@ func Exe(t core.AgentTool) string {
 		return claudeExe()
 	case core.Agy:
 		return agyACPExe()
+	case core.Omp, core.OmpOpus, core.OmpSol:
+		return Find("omp")
+	case core.Devin:
+		return Find("devin")
 	}
 	// Agents of the user's own are gone: a chat that still names one has nothing to start.
 	return ""
+}
+
+// OmpProfile is the Oh My Pi profile a tool runs on ("" for its default one), and whether
+// the tool is Oh My Pi at all.
+func OmpProfile(t core.AgentTool) (string, bool) {
+	switch t {
+	case core.Omp:
+		return "", true
+	case core.OmpOpus:
+		return "opus", true
+	case core.OmpSol:
+		return "sol", true
+	}
+	return "", false
+}
+
+// ompCommand is how a terminal starts that profile's omp.
+func ompCommand(profile string) string {
+	if profile == "" {
+		return "omp"
+	}
+	return "omp --profile=" + profile
 }
 
 // AgyACPVersion: Google's Antigravity ACP server, as T3 Code runs it (and as the ACP
@@ -306,6 +332,15 @@ func Arguments(t core.AgentTool) []string {
 		if runtime.GOOS == "linux" {
 			return []string{"--uid="}
 		}
+	case core.Omp, core.OmpOpus, core.OmpSol:
+		// Its ACP server on stdio; a profile keeps its own sign-in, settings and sessions.
+		if profile, _ := OmpProfile(t); profile != "" {
+			return []string{"--profile=" + profile, "acp"}
+		}
+		return []string{"acp"}
+	case core.Devin:
+		// The local agent; never --cloud, which relays the session to Devin's cloud.
+		return []string{"acp"}
 	}
 	return []string{}
 }
@@ -332,6 +367,10 @@ func InstallHint(t core.AgentTool) string {
 		return "Install Claude Code: curl -fsSL https://claude.ai/install.sh | bash"
 	case core.Custom:
 		return "Check the agent’s program in Settings."
+	case core.Omp, core.OmpOpus, core.OmpSol:
+		return "Install Oh My Pi with Bun: bun install -g @oh-my-pi/pi-coding-agent"
+	case core.Devin:
+		return "Install the Devin CLI: curl -fsSL https://cli.devin.ai/install.sh | bash"
 	}
 	return fmt.Sprintf("Install Google’s Antigravity ACP server %s: unzip agy-acp-server-%s-<os>-<arch>.zip from dl.google.com/agy-extensions/releases into %s.",
 		AgyACPVersion, AgyACPVersion, AgyACPDir())
@@ -354,6 +393,11 @@ func SignInHint(t core.AgentTool) string {
 		return "Sign in: run “claude auth login” in a terminal."
 	case core.Custom:
 		return "Sign in with the agent’s own method in Settings."
+	case core.Omp, core.OmpOpus, core.OmpSol:
+		profile, _ := OmpProfile(t)
+		return fmt.Sprintf("Sign in: run “%s” in a terminal and add a provider with /login.", ompCommand(profile))
+	case core.Devin:
+		return "Sign in: run “devin auth login” in a terminal."
 	}
 	// The server runs Google's sign-in itself when Hover starts it (acp), or takes
 	// GEMINI_API_KEY from the environment.
@@ -470,6 +514,14 @@ func look(t core.AgentTool) (AgentReady, string) {
 		}
 		return bad("Couldn’t read OpenCode’s version. " + InstallHint(t)), ""
 	}
+	if profile, ok := OmpProfile(t); ok {
+		// No status command: its ACP server reads the sign-ins under ~/.omp itself. A named
+		// profile that was never made has nothing to sign in with.
+		if profile != "" && !isDir(filepath.Join(Home(), ".omp", "profiles", profile)) {
+			return AgentReady{true, false, SignInHint(t)}, ""
+		}
+		return AgentReady{true, true, ""}, ""
+	}
 	if t == core.Agy {
 		// Never started to ask: it unpacks about 1 GB per start (T3 Code doesn't either).
 		// It has no status command; a missing sign-in shows as the task's own error.
@@ -485,6 +537,9 @@ func look(t core.AgentTool) (AgentReady, string) {
 		args = []string{"status"}
 	case core.Claude:
 		// Exit 0 and {"loggedIn": true} when signed in, 1 when not.
+		args = []string{"auth", "status"}
+	case core.Devin:
+		// "Logged in (via Devin)." and exit 0 when signed in.
 		args = []string{"auth", "status"}
 	}
 	// The adapter can carry its own Codex; without the CLI there is nothing to ask.

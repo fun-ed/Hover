@@ -5,8 +5,74 @@ What changed in each Hover release. Versions follow [Semantic Versioning](https:
 
 ## [Unreleased]
 
+## [5.2.0] - 2026-10-26
+
+More agents and more control on the Mac: Oh My Pi (three profiles) and Devin, a switch to turn
+any agent off, files of any kind attached to a task, and Settings → Storage. Not run with a real
+agent: each new piece is checked by its tests and a build for Apple silicon and Intel.
+
+### Added
+
+- Mac: Settings → Storage. Pasted images and attached files are kept 7, 14 or 30 days (14, as
+  before, unless changed), and are now swept every six hours while Hover runs, not only at its
+  start. The page shows the space each part of Hover's folder takes and cleans it now, older than
+  7, 14 or 30 days or of any age: pasted images and attached files; checkpoints of chats not
+  updated in that time and not open (their Restore and Try again go; asked first); the log; and
+  the office's web cache (its saved page settings stay). Chat history is only shown. The choice
+  is kept in `storage.json` in the data folder.
+- `hover.log` starts again past 5 MB, keeping the one before as `hover.log.1`. It used to grow
+  without end. This applies on Windows and Linux too.
+- Mac: any file can be attached to a task or a reply, not only an image: up to ten besides the
+  four images, 20 MB each and 50 MB in all. Before, a file that wasn't an image was dropped
+  without a word. Each is saved in the data folder's `attachments` (swept after two weeks, as
+  images are) and named on a line of the prompt, so every agent can read it. An ACP agent also
+  gets each as a block of its own: a text file up to 256 KB inside the prompt when the agent
+  takes embedded context (Oh My Pi, Devin), anything else as a `resource_link`, which every ACP
+  agent takes. Claude Code, which isn't ACP, gets images, PDFs up to 10 MB and text files up to
+  256 KB as its own image and document blocks. Codex now gets pasted images as images too (it
+  says it takes them), as Kiro, Oh My Pi and Devin do. The chat shows them as chips of the files' names. The backend takes host lines
+  of up to 128 MB (was 48) to carry them. Not tried with a real agent.
+- Mac: Oh My Pi as three agents, one per profile: Oh My Pi (`omp acp`), Oh My Pi (opus)
+  (`omp --profile=opus acp`) and Oh My Pi (sol) (`omp --profile=sol acp`). Each has its own
+  models, effort, access and desks; models and effort are omp's own ACP options. Read only runs
+  omp's plan mode. Pasted pictures go to it as images, as to Kiro. omp has no status command, so it counts as ready once installed, and a named
+  profile once `~/.omp/profiles/<name>` exists. Setup installs Bun and omp. Not on Windows or
+  Linux, whose Settings have a page per tool and none for it. Checked with omp 18.12.6 up to a
+  new session; no task was run, so whether omp asks before its tools under Ask first is not
+  checked.
+- Mac: Devin, as its local ACP server (`devin acp`; never `--cloud`). Signed in when
+  `devin auth status` says so. Access maps onto its modes: Full is `bypass`, Ask first
+  `accept-edits`, Ask always `ask`, Read only `plan`; its own `smart` mode is not used. Models
+  and effort are its `model` and `thought_level` options. Pasted pictures go to it as images. Setup
+  runs its installer. Checked with
+  devin 3000.11.205 up to a new session; no task was run.
+- Mac: each agent's Settings page has a **Use in Hover** switch. An agent switched off leaves the
+  office's new-task picker and voice's agent list, is never checked or started (no status
+  command, no model discovery), and a task asked of it is refused. Settings still lists it, dimmed
+  and marked Off, to switch it back on; its past chats stay. One agent always stays on. Kept in
+  `agents.json` in the data folder, so `settings.json` is unchanged.
+
+## [5.1.0] - 2026-10-26
+
+The Mac app runs on macOS 13 Ventura and uses less of the Mac while it runs. Also the chat, office
+and window changes merged since 5.0.4 (below). The Mac part was compiled for Apple silicon and
+Intel at macOS 13 and its binaries checked; it has not been run on macOS 13, and the lower
+resource use has not been measured.
+
 ### Changed
 
+- The Mac app needs macOS 13 or later (was 14). On macOS 13 the desk card's Screen tab stays
+  blank (it needs ScreenCaptureKit's screenshot API, macOS 14), the notch animates on a 60 Hz
+  timer instead of a display link, and the menu bar's section titles are plain greyed-out rows.
+- The Mac office draws at up to 60 fps while something moves, not the display's 120 on a
+  ProMotion screen; idle stays at 10 fps.
+- The Mac office no longer antialiases at 2x density, where the density already smooths edges,
+  and asks for the low-power GPU, so an Intel Mac with two GPUs stays on the integrated one.
+- The Mac app checks the pointer every 200 ms (was 50 ms) and lets macOS group its timers; mouse
+  presses and a pointer resting on the notch are caught as they happen instead of by that check.
+- The working spinner on the closed notch redraws at 20 fps (was 30).
+- The office page skips its clock labels and the browser and desktop placement while it is out
+  of sight.
 - The chat shows a turn the way Claude's desktop app does: what the agent said and the tools it
   ran, in the order it happened, then its answer. A run of tools between two things it said is
   one box that says what they did ("2 files read · 1 search"); a click opens it to the steps. A

@@ -20,6 +20,7 @@ package agents
 
 import (
 	"bufio"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"os"
@@ -153,6 +154,56 @@ func listOf(e core.JSON, k string) []core.JSON {
 }
 
 func claudeLog(t string) { core.Logf("claude: %s", t) }
+
+// Claude's own limits on what goes inside a message: a picture up to 5 MB, a PDF up to the
+// 10 MB kept here (its request may hold 32 MB).
+const (
+	claudeImageMax = 5 * 1024 * 1024
+	claudePDFMax   = 10 * 1024 * 1024
+)
+
+// claudeContent is the prompt as Claude's content blocks (the Messages API's): each pasted
+// picture as an image, its line dropped; each attached PDF or small text file as a
+// document besides its line, which stays. Anything else (too big, another kind) is only
+// its line, which Claude reads with its own tools.
+func claudeContent(prompt string) core.JSON {
+	text := func(t string) core.JSON {
+		return core.JObj(core.P("type", core.JStr("text")), core.P("text", core.JStr(strings.TrimSpace(t))))
+	}
+	if !strings.Contains(prompt, Attached) && !strings.Contains(prompt, AttachedFile) {
+		return core.JArr(text(prompt))
+	}
+	base64Of := func(kind, p string) core.JSON {
+		b, _ := os.ReadFile(p)
+		return core.JObj(core.P("type", core.JStr("base64")), core.P("media_type", core.JStr(kind)), core.P("data", core.JStr(base64.StdEncoding.EncodeToString(b))))
+	}
+	small := func(p string, most int64) bool { fi, err := os.Stat(p); return err == nil && fi.Size() <= most }
+	var kept []string
+	var blocks []core.JSON
+	pics := 0
+	for _, line := range rustLines(prompt) {
+		if p, ok := strings.CutPrefix(line, AttachedFile); ok {
+			kept = append(kept, line)
+			kind := attachedKind(p)
+			if kind == "application/pdf" && small(p, claudePDFMax) {
+				blocks = append(blocks, core.JObj(core.P("type", core.JStr("document")), core.P("source", base64Of(kind, p)), core.P("title", core.JStr(attachedName(p)))))
+			} else if b, ok := smallText(p); ok {
+				source := core.JObj(core.P("type", core.JStr("text")), core.P("media_type", core.JStr("text/plain")), core.P("data", core.JStr(string(b))))
+				blocks = append(blocks, core.JObj(core.P("type", core.JStr("document")), core.P("source", source), core.P("title", core.JStr(attachedName(p)))))
+			}
+			continue
+		}
+		if p, ok := strings.CutPrefix(line, Attached); ok && pics < imagesMax && small(p, claudeImageMax) {
+			if kind := attachedKind(p); strings.HasPrefix(kind, "image/") {
+				blocks = append(blocks, core.JObj(core.P("type", core.JStr("image")), core.P("source", base64Of(kind, p))))
+				pics++
+				continue
+			}
+		}
+		kept = append(kept, line)
+	}
+	return core.JArr(append([]core.JSON{text(strings.Join(kept, "\n"))}, blocks...)...)
+}
 
 // ClaudeKindOf is Claude Code's tools in ACP's kinds, for the chat's icons and for what
 // asks.
@@ -754,7 +805,7 @@ func (h *ClaudeHost) turn(turn *claudeTurn, prompt string, resume *string, o cor
 		turn.events(KiroEvent{SessionID: sp(*sid)})
 	}
 	message := core.JObj(core.P("type", core.JStr("user")), core.P("message", core.JObj(core.P("role", core.JStr("user")),
-		core.P("content", core.JArr(core.JObj(core.P("type", core.JStr("text")), core.P("text", core.JStr(strings.TrimSpace(prompt))))))),
+		core.P("content", claudeContent(prompt))),
 	), core.P("parent_tool_use_id", core.JNull), core.P("session_id", core.JStr("")))
 	var ended claudeEnded
 	if !proc.write(message) {

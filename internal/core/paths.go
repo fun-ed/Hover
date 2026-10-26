@@ -115,6 +115,9 @@ func DropPlanner(dir string) {
 
 var logGate sync.Mutex
 
+// logMax is where hover.log starts again (Logf).
+const logMax = 5 * 1024 * 1024
+
 // Logf is Log.cs: one line, to stderr and to hover.log in the data folder. Logging must
 // never take the app down: SIGPIPE is ignored, so a closed stderr comes back as an
 // error from the write below instead of killing the process.
@@ -123,6 +126,10 @@ func Logf(format string, a ...any) {
 	fmt.Fprintln(os.Stderr, stamp)
 	logGate.Lock()
 	defer logGate.Unlock()
+	// Past 5 MiB the log starts again; the one before is kept as hover.log.1.
+	if info, err := os.Stat(LogFile()); err == nil && info.Size() > logMax {
+		os.Rename(LogFile(), LogFile()+".1")
+	}
 	if f, err := os.OpenFile(LogFile(), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644); err == nil {
 		f.WriteString(stamp + NewLine)
 		f.Close()

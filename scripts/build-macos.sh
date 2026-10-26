@@ -37,8 +37,8 @@ if [[ "${HOVER_SETTINGS_TESTS:-0}" == 1 ]]; then
   SWIFT_SOURCES+=("$ROOT/tests/macos/SettingsSmoke.swift")
   SWIFT_FLAGS+=(-D HOVER_SETTINGS_TESTS)
 fi
-xcrun swiftc "${SWIFT_FLAGS[@]}" -O -target "$ARCH-apple-macos14.0" -framework AppKit -framework SwiftUI -framework WebKit -framework Security -framework ServiceManagement -framework UserNotifications -framework Carbon -framework ScreenCaptureKit -framework AVFoundation -framework Speech -framework CoreMedia "${SWIFT_SOURCES[@]}" -o "$APP/Contents/MacOS/Hover"
-xcrun clang -O2 -arch "$ARCH" -mmacosx-version-min=14.0 "$ROOT/macos/Sources/guardian.c" -o "$RES/hover-guardian"
+xcrun swiftc "${SWIFT_FLAGS[@]}" -O -target "$ARCH-apple-macos13.0" -framework AppKit -framework SwiftUI -framework WebKit -framework Security -framework ServiceManagement -framework UserNotifications -framework Carbon -framework ScreenCaptureKit -framework AVFoundation -framework Speech -framework CoreMedia "${SWIFT_SOURCES[@]}" -o "$APP/Contents/MacOS/Hover"
+xcrun clang -O2 -arch "$ARCH" -mmacosx-version-min=13.0 "$ROOT/macos/Sources/guardian.c" -o "$RES/hover-guardian"
 cp "$ROOT/web/office/dist/kiro-office.html" "$RES/office/"
 cp "$ROOT/macos/Resources/office-beats.m4a" "$RES/office/"
 cp "$ROOT/LICENSE" "$ROOT/THIRD-PARTY-NOTICES.txt" "$RES/"
@@ -56,7 +56,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <key>CFBundleIdentifier</key><string>dev.hover.desktop</string><key>CFBundleExecutable</key><string>Hover</string>
 <key>CFBundlePackageType</key><string>APPL</string><key>CFBundleIconFile</key><string>Hover.icns</string>
 <key>CFBundleShortVersionString</key><string>$VERSION</string><key>CFBundleVersion</key><string>$BUILD</string>
-<key>LSMinimumSystemVersion</key><string>14.0</string><key>LSUIElement</key><true/>
+<key>LSMinimumSystemVersion</key><string>13.0</string><key>LSUIElement</key><true/>
 <key>NSHighResolutionCapable</key><true/>
 <key>NSMicrophoneUsageDescription</key><string>Hover listens while you hold Control-Option-Space, so you can say a task for an agent.</string>
 <key>NSSpeechRecognitionUsageDescription</key><string>Hover turns what you say into a task's words on this Mac.</string>

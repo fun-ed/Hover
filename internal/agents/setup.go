@@ -128,6 +128,18 @@ func PlanWith(t core.AgentTool, has func(string) bool, sandbox *SandboxNeeds) []
 					`curl -fL -o "$z" https://dl.google.com/agy-extensions/releases/macos/agy-acp-server-%s-darwin-$a.zip && `+
 					`mkdir -p %s && unzip -o -q "$z" -d %s; rm -f "$z"`, AgyACPVersion, dir, dir)})
 		}
+	case core.Omp, core.OmpOpus, core.OmpSol:
+		// Oh My Pi runs on Bun, its own runtime, installed first when there is none.
+		if !has("omp") {
+			if !has("bun") && !isFile(filepath.Join(Home(), ".bun", "bin", "bun")) {
+				steps = append(steps, SetupStep{"Installing Bun", "curl -fsSL https://bun.sh/install | bash"})
+			}
+			steps = append(steps, SetupStep{"Installing Oh My Pi", `"$HOME/.bun/bin/bun" install -g @oh-my-pi/pi-coding-agent`})
+		}
+	case core.Devin:
+		if !has("devin") {
+			steps = append(steps, SetupStep{"Installing the Devin CLI", "curl -fsSL https://cli.devin.ai/install.sh | bash"})
+		}
 	}
 	node := SetupStep{"Installing Node.js", "brew install node"}
 	if len(packages) > 0 {
@@ -170,6 +182,12 @@ func SignInCommand(t core.AgentTool) string {
 		return "opencode auth login"
 	case core.Claude:
 		return "claude auth login"
+	case core.Omp, core.OmpOpus, core.OmpSol:
+		// Its own interface, where /login adds a provider to the profile.
+		profile, _ := OmpProfile(t)
+		return ompCommand(profile)
+	case core.Devin:
+		return "devin auth login"
 	}
 	// No command for Antigravity: the server runs Google's sign-in itself at its first task.
 	return ""

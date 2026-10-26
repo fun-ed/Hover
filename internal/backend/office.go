@@ -31,6 +31,19 @@ type ctx struct {
 	// checkpoints: sessions keep checkpoints of their folder (git is there): Restore and Try again.
 	checkpoints bool
 	known       func(core.AgentTool) (agents.AgentReady, bool)
+	// off says an agent is switched off in Settings; firstOn is the tool new tasks fall back to.
+	// Both nil (tests): every agent on.
+	off     func(core.AgentTool) bool
+	firstOn func(core.AgentTool) core.AgentTool
+}
+
+func (c *ctx) isOff(t core.AgentTool) bool { return c.off != nil && c.off(t) }
+
+func (c *ctx) defaultTool() core.AgentTool {
+	if c.firstOn == nil {
+		return c.settings.AgentTool()
+	}
+	return c.firstOn(c.settings.AgentTool())
 }
 
 func jnum(f *float64) core.JSON { return core.JOptDouble(f) }
@@ -56,7 +69,7 @@ func snapshot(c *ctx) core.JSON {
 		// Agents have desktops of their own (Cua Spaces): the office says so.
 		core.P("spaces", jbool(agents.SpacesWanted())),
 		core.P("folder", jopt(c.settings.KiroFolder())),
-		core.P("tool", jst(c.settings.AgentTool().ID())),
+		core.P("tool", jst(c.defaultTool().ID())),
 		core.P("tools", core.JArr(tools...)),
 		core.P("sessions", core.JArr(sessions...)),
 		core.P("history", core.JArr(history...)),
@@ -174,6 +187,8 @@ func tool(c *ctx, t core.AgentTool) core.JSON {
 		core.P("effort", jopt(opts.Effort)),
 		core.P("effortLabel", jst(caps.EffortLabel)),
 		core.P("questions", jbool(caps.Questions)),
+		// Off in Settings: the office and voice leave it out; Settings still lists it.
+		core.P("enabled", jbool(!c.isOff(t))),
 	)
 }
 

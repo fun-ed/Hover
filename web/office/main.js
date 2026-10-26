@@ -20,9 +20,11 @@ const view = $('#office'), canvas = $('#gl');
 // On Windows, one pixel per CSS pixel and no antialiasing: they look the same there
 // and keep the frame buffers a quarter of the size. The Mac host (window.hoverHost)
 // is on Retina displays, where a 1x canvas is visibly soft, so it draws at the
-// display's density (up to 2x) with antialiasing; an M-series GPU doesn't notice.
+// display's density (up to 2x). Antialiasing only below 2x: at 2x the density already
+// smooths edges, and MSAA would multiply the frame buffers. Low power keeps an Intel Mac
+// with two GPUs on the integrated one.
 const RETINA = !!window.hoverHost;
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: RETINA, alpha: true, powerPreference: RETINA ? 'high-performance' : 'low-power' });
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: RETINA && (window.devicePixelRatio || 1) < 2, alpha: true, powerPreference: 'low-power' });
 renderer.setPixelRatio(RETINA ? Math.min(2, window.devicePixelRatio || 1) : 1);
 renderer.setClearColor(0, 0);
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -566,7 +568,7 @@ let hostBrowser = false;
 // in its own window rather than the notch.
 let spacesOn = !host, inWindow = false;
 // The agent tools, in the picker's order. Hover says which are installed and signed in.
-const TOOLS = { kiro: ['Kiro', '#b48cff'], codex: ['Codex', '#3fd6a0'], cursor: ['Cursor', '#7cc0ff'], opencode: ['OpenCode', '#e8e8ec'], claude: ['Claude Code', '#d97757'], agy: ['Antigravity', '#3186ff'] };
+const TOOLS = { kiro: ['Kiro', '#b48cff'], codex: ['Codex', '#3fd6a0'], cursor: ['Cursor', '#7cc0ff'], opencode: ['OpenCode', '#e8e8ec'], claude: ['Claude Code', '#d97757'], agy: ['Antigravity', '#3186ff'], omp: ['Oh My Pi', '#ff8a3d'], 'omp-opus': ['Oh My Pi (opus)', '#c4a7ff'], 'omp-sol': ['Oh My Pi (sol)', '#ffd54a'], devin: ['Devin', '#3ddc97'] };
 // Each tool's own logo, only to show which tool is picked (from the MIT-licensed
 // LobeHub icon set; the marks belong to their owners).
 const LOGOS = {
@@ -579,6 +581,12 @@ const LOGOS = {
   claude: '<svg viewBox="0 0 24 24"><path d="M4.709,15.955 L9.429,13.308 L9.509,13.078 L9.429,12.95 L9.2,12.95 L8.41,12.902 L5.712,12.829 L3.373,12.732 L1.107,12.61 L0.536,12.489 L0,11.784 L0.055,11.432 L0.535,11.111 L1.221,11.171 L2.741,11.274 L5.019,11.432 L6.671,11.529 L9.12,11.784 L9.509,11.784 L9.564,11.627 L9.43,11.529 L9.327,11.432 L6.969,9.836 L4.417,8.148 L3.081,7.176 L2.357,6.685 L1.993,6.223 L1.835,5.215 L2.491,4.493 L3.372,4.553 L3.597,4.614 L4.49,5.3 L6.398,6.776 L8.889,8.609 L9.254,8.913 L9.399,8.81 L9.418,8.737 L9.254,8.463 L7.899,6.017 L6.453,3.527 L5.809,2.495 L5.639,1.876 C5.574,1.638 5.539,1.393 5.535,1.147 L6.283,0.134 L6.696,0 L7.692,0.134 L8.112,0.498 L8.732,1.912 L9.734,4.141 L11.289,7.171 L11.745,8.069 L11.988,8.901 L12.079,9.156 L12.237,9.156 L12.237,9.01 L12.365,7.304 L12.602,5.209 L12.832,2.514 L12.912,1.754 L13.288,0.844 L14.035,0.352 L14.619,0.632 L15.099,1.317 L15.032,1.761 L14.746,3.612 L14.187,6.515 L13.823,8.457 L14.035,8.457 L14.278,8.215 L15.263,6.909 L16.915,4.845 L17.645,4.025 L18.495,3.121 L19.042,2.69 L20.075,2.69 L20.835,3.819 L20.495,4.985 L19.431,6.332 L18.55,7.474 L17.286,9.174 L16.496,10.534 L16.569,10.644 L16.757,10.624 L19.613,10.018 L21.156,9.738 L22.997,9.423 L23.83,9.811 L23.921,10.206 L23.593,11.013 L21.624,11.499 L19.315,11.961 L15.876,12.774 L15.834,12.804 L15.883,12.865 L17.432,13.011 L18.094,13.047 L19.716,13.047 L22.736,13.272 L23.526,13.794 L24,14.432 L23.921,14.917 L22.706,15.537 L21.066,15.148 L17.237,14.238 L15.925,13.909 L15.743,13.909 L15.743,14.019 L16.836,15.087 L18.842,16.897 L21.351,19.227 L21.478,19.805 L21.156,20.26 L20.816,20.211 L18.611,18.554 L17.76,17.807 L15.834,16.187 L15.706,16.187 L15.706,16.357 L16.15,17.006 L18.495,20.527 L18.617,21.607 L18.447,21.96 L17.839,22.173 L17.171,22.051 L15.797,20.126 L14.382,17.959 L13.239,16.016 L13.099,16.096 L12.425,23.35 L12.109,23.72 L11.38,24 L10.773,23.539 L10.451,22.792 L10.773,21.316 L11.162,19.392 L11.477,17.862 L11.763,15.962 L11.933,15.33 L11.921,15.288 L11.781,15.306 L10.347,17.273 L8.167,20.218 L6.441,22.063 L6.027,22.227 L5.31,21.857 L5.377,21.195 L5.778,20.606 L8.166,17.57 L9.606,15.688 L10.536,14.602 L10.53,14.444 L10.475,14.444 L4.132,18.56 L3.002,18.706 L2.515,18.25 L2.576,17.504 L2.807,17.261 L4.715,15.949 L4.709,15.955 L4.709,15.955 Z"/></svg>',
   // Antigravity's arch (LobeHub Icons, MIT; the Rust app's marks.slint has it too), in Google's blue.
   agy: '<svg viewBox="0 1 24 22.4"><path d="M21.751 22.607c1.34 1.005 3.35.335 1.508-1.508C17.73 15.74 18.904 1 12.037 1 5.17 1 6.342 15.74.815 21.1c-2.01 2.009.167 2.511 1.507 1.506 5.192-3.517 4.857-9.714 9.715-9.714 4.857 0 4.522 6.197 9.714 9.715z"/></svg>',
+  // Oh My Pi: a plain π (Hover's own drawing, as the notch's), a colour per profile.
+  omp: '<svg viewBox="0 0 24 24"><path d="M3 5h18v3.4h-3.6V19H14V8.4h-4v6.8c0 2.4-1 3.8-3.4 3.8H5.4v-3c1 0 1.2-.4 1.2-1.4V8.4H3z"/></svg>',
+  'omp-opus': '<svg viewBox="0 0 24 24"><path d="M3 5h18v3.4h-3.6V19H14V8.4h-4v6.8c0 2.4-1 3.8-3.4 3.8H5.4v-3c1 0 1.2-.4 1.2-1.4V8.4H3z"/></svg>',
+  // Devin: a plain D (Hover's own drawing, as the notch's).
+  devin: '<svg viewBox="0 0 24 24"><path fill-rule="evenodd" d="M5 3h7c5.5 0 9 3.8 9 9s-3.5 9-9 9H5zM8.6 6.4v11.2h3.2c3.4 0 5.5-2.2 5.5-5.6s-2.1-5.6-5.5-5.6z"/></svg>',
+  'omp-sol': '<svg viewBox="0 0 24 24"><path d="M3 5h18v3.4h-3.6V19H14V8.4h-4v6.8c0 2.4-1 3.8-3.4 3.8H5.4v-3c1 0 1.2-.4 1.2-1.4V8.4H3z"/></svg>',
 };
 // The gradient id has to be unique on the page, and the logo shows twice.
 let logoN = 0;
@@ -589,6 +597,8 @@ let tools = Object.keys(TOOLS).map(id => ({ id, name: TOOLS[id][0], ready: true,
 const newAccess = {};
 const newAccessOf = x => { const a = newAccess[x.id] || x.access; return ACCESS[a] && (a !== 'read' || x.readOnly) ? a : 'full'; };
 const toolOf = s => tools.find(x => x.id === (s?.tool || 'kiro')) || tools[0];
+// Agents switched off in Settings stay in tools (their old chats need them), not in the picker.
+const onTools = () => tools.filter(x => x.enabled !== false);
 // The tool shows as its own logo, never its name (that is in the tooltip).
 const badge = id => `<span class="lg mini ${TOOLS[id] ? id : 'kiro'}" title="${(TOOLS[id] || TOOLS.kiro)[0]}" role="img" aria-label="${(TOOLS[id] || TOOLS.kiro)[0]}">${logo(id)}</span>`;
 let sessions = host ? [] : demo();
@@ -661,7 +671,7 @@ function freeBot() { const used = new Set(sessions.map(s => s.bot)); const i = B
 function fromHost(m) {
   // In the notch the office fills the shape, edge to edge.
   document.body.classList.toggle('notch', !m.window);
-  canStart = m.canStart; maxRunning = m.maxRunning; hostBrowser = !!m.browser; spacesOn = !!m.spaces; inWindow = !!m.window; syncBig(); if (m.tools) tools = m.tools; if (!toolPicked && m.tool) newTool = m.tool;
+  canStart = m.canStart; maxRunning = m.maxRunning; hostBrowser = !!m.browser; spacesOn = !!m.spaces; inWindow = !!m.window; syncBig(); if (m.tools) tools = m.tools; if (!toolPicked && m.tool) newTool = m.tool; if (!onTools().some(x => x.id === newTool)) { newTool = onTools()[0]?.id || newTool; toolPicked = false; }
   if (m.history) history = m.history;
   defaultFolder = m.folder || null; if (!newFolder) newFolder = defaultFolder;
   const seen = new Set();
@@ -737,7 +747,7 @@ function doStop(s) {
 }
 function doReply(text, images = [], s = cur()) {
   if (!s || (!text && !images.length)) return;
-  if (s.archived) { if (!host) return toast('In Hover this wakes the session.'); pendingKey = s.key; return host.postMessage({ type: 'reply', key: s.key, text, images }); }
+  if (s.archived) { if (!host) return toast('In Hover this wakes the session.'); pendingKey = s.key; return host.postMessage({ type: 'reply', key: s.key, text, images: picsOf(images), files: filesOf(images) }); }
   // A reply while a question waits is its answer, in the user's own words, where the
   // question takes one. A reply while it asks to run something leaves that request
   // for its own buttons and waits behind it.
@@ -747,13 +757,13 @@ function doReply(text, images = [], s = cur()) {
     }
     return toast('Answer the question above first, or skip it.');
   }
-  if (host) return host.postMessage({ type: 'reply', id: s.id, text, images });
-  const wait = busy(s), T = { prompt: text, images, stage: 'waking', t0: Date.now(), steps: [], queued: wait };
+  if (host) return host.postMessage({ type: 'reply', id: s.id, text, images: picsOf(images), files: filesOf(images) });
+  const wait = busy(s), T = { prompt: text, images: picsOf(images), stage: 'waking', t0: Date.now(), steps: [], queued: wait };
   s.turns.push(T);
   if (wait) changed(s); else play(s, T);
 }
 function doNew(text, folder, images = []) {
-  if (host) { host.postMessage({ type: 'new', prompt: text, folder, images, tool: newTool, access: newAccessOf(tools.find(x => x.id === newTool) || tools[0]) }); return true; }
+  if (host) { host.postMessage({ type: 'new', prompt: text, folder, images: picsOf(images), files: filesOf(images), tool: newTool, access: newAccessOf(tools.find(x => x.id === newTool) || tools[0]) }); return true; }
   let desk = freeDesk();
   if (desk < 0) {
     const old = sessions.filter(s => !busy(s)).sort((a, b) => last(a).t0 - last(b).t0)[0];
@@ -1066,7 +1076,7 @@ function renderDrawer() {
     // What the turn cost, under its answer, when the tool says (Kiro does).
     const use = T.answer && T.credits != null ? `<div class="use" title="Kiro credits this turn used">${esc(credits(T.credits))}</div>` : '';
     const pics = T.images?.length ? `<div class="pics">${T.images.map(u => `<img src="${esc(u)}" alt="Attached image" loading="lazy">`).join('')}</div>` : '';
-    return `<div class="me">${T.prompt ? copyBtn(T.prompt, 'Copy the message') : ''}${pics}${esc(T.prompt)}${T.queued ? '<span class="q">Queued · sends when this run ends</span>' : ''}${T.t0 ? `<span class="when">${hm(T.t0)}</span>` : ''}</div>${steps}${now}${ans}${chg}${use}`;
+    return `<div class="me">${T.prompt ? copyBtn(T.prompt, 'Copy the message') : ''}${pics}${meText(T.prompt)}${T.queued ? '<span class="q">Queued · sends when this run ends</span>' : ''}${T.t0 ? `<span class="when">${hm(T.t0)}</span>` : ''}</div>${steps}${now}${ans}${chg}${use}`;
   }).join('');
   // A code block in an answer gets its language and a Copy button.
   for (const pre of th.querySelectorAll('.ans pre')) {
@@ -1125,7 +1135,7 @@ function renderPanel() {
     }).join('')}</div>`;
   } else {
     $('#pTitle').textContent = 'Office overview';
-    $('#pSub').textContent = `Up to ${maxRunning === 1 ? 'one task runs' : maxRunning + ' tasks run'} at once, across ${tools.map(t => t.name).join(', ').replace(/, ([^,]*)$/, ' and $1')}`;
+    $('#pSub').textContent = `Up to ${maxRunning === 1 ? 'one task runs' : maxRunning + ' tasks run'} at once, across ${onTools().map(t => t.name).join(', ').replace(/, ([^,]*)$/, ' and $1')}`;
     const stats = [['Working', count(['waking', 'working', 'waiting']), 'var(--li)'], ['Done', count(['done']), 'var(--ok)'], ['Failed', count(['failed']), 'var(--bad)'], ['Stopped', count(['stopped']), 'var(--stop)']];
     body.innerHTML = `<div class="stats">${stats.map(([l, v, c]) => `<div style="--k:${c}"><b>${v}</b><span>${l}</span></div>`).join('')}</div>
       <h4 class="sh">Context used</h4>${sessions.map(s => `<button class="meter" data-open="${s.id}">${LOGO(s.b.css)}<span class="mt"><b>${esc(s.b.name)}</b><span>${esc(s.title)}</span><i><u style="width:${s.ctx ?? 0}%"></u></i></span><em>${s.ctx == null ? '—' : s.ctx + '%'}</em></button>`).join('') || '<p class="none">No sessions yet. Press + to give an agent a task.</p>'}`;
@@ -1231,7 +1241,7 @@ addEventListener('keydown', e => {
 });
 
 const clockOf = t0 => { const n = Math.max(0, Math.floor((Date.now() - t0) / 1000)); return `${Math.floor(n / 60)}:${String(n % 60).padStart(2, '0')}`; };
-setInterval(() => { for (const lt of document.querySelectorAll('#thread .sum .tm, #deskMenu .tm')) lt.textContent = clockOf(+lt.dataset.t0); }, 1000);
+setInterval(() => { if (paused) return; for (const lt of document.querySelectorAll('#thread .sum .tm, #deskMenu .tm')) lt.textContent = clockOf(+lt.dataset.t0); }, 1000);
 function openSession(id) {
   closePanel(true); fold();
   viewing = null; sel = id; drawerOpen = true; view.classList.add('open'); $('#drawer').classList.add('open'); $('#drawer').setAttribute('aria-hidden', 'false');
@@ -1374,8 +1384,21 @@ const input = $('#input');
 function autosize(el) { el.style.height = '28px'; el.style.height = Math.min(112, Math.max(28, el.scrollHeight)) + 'px'; }
 
 // Pasted, dropped or picked images, kept as data: URLs until sent. Big ones are
-// scaled to 2000 px on the long side, which is plenty for Kiro to read them.
-const MAX_PICS = 4, attached = { reply: [], new: [] };
+// scaled to 2000 px on the long side, which is plenty for Kiro to read them. Any other
+// file is kept whole as { name, size, data } (up to ten, 20 MB each) and goes as a file.
+const MAX_PICS = 4, MAX_FILES = 10, MAX_FILE_BYTES = 20 * 1024 * 1024, MAX_FILES_BYTES = 50 * 1024 * 1024, attached = { reply: [], new: [] };
+const PIC_TYPES = /^image\/(png|jpeg|gif|webp)$/;
+const picsOf = list => list.filter(x => typeof x === 'string'), filesOf = list => list.filter(x => typeof x !== 'string');
+const readAll = f => new Promise(res => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = () => res(null); r.readAsDataURL(f); });
+// A message's attached-file lines (the backend's withFiles) show as chips of the files' own names.
+function meText(p) {
+  const FILE_LINE = 'Attached file (read it from this file): ';
+  const lines = p.split('\n'), files = lines.filter(l => l.startsWith(FILE_LINE));
+  if (!files.length) return esc(p);
+  const chips = files.map(l => { const f = l.slice(FILE_LINE.length), n = f.split('/').pop().replace(/^.{24}-/, ''); return `<span class="att" title="${esc(f)}">${esc(n)}</span>`; }).join('');
+  return `<div class="atts">${chips}</div>${esc(lines.filter(l => !l.startsWith(FILE_LINE)).join('\n').trim())}`;
+}
+const sizeOf = n => n < 1024 ? n + ' B' : n < 1048576 ? Math.round(n / 1024) + ' KB' : (n / 1048576).toFixed(1) + ' MB';
 function shrink(file) {
   return new Promise(res => {
     const url = URL.createObjectURL(file), img = new Image();
@@ -1391,18 +1414,26 @@ function shrink(file) {
   });
 }
 async function addPics(files, which) {
-  const list = [...files].filter(f => f.type.startsWith('image/'));
+  const list = [...files];
   if (!list.length) return false;
   for (const f of list) {
-    if (attached[which].length >= MAX_PICS) { toast(`Up to ${MAX_PICS} images at a time.`); break; }
-    const d = await shrink(f); if (d) attached[which].push(d);
+    if (PIC_TYPES.test(f.type)) {
+      if (picsOf(attached[which]).length >= MAX_PICS) { toast(`Up to ${MAX_PICS} images at a time.`); continue; }
+      const d = await shrink(f); if (d) attached[which].push(d);
+      continue;
+    }
+    if (filesOf(attached[which]).length >= MAX_FILES) { toast(`Up to ${MAX_FILES} files at a time.`); continue; }
+    if (f.size > MAX_FILE_BYTES) { toast(`${f.name} is over 20 MB.`); continue; }
+    if (filesOf(attached[which]).reduce((n, x) => n + x.size, 0) + f.size > MAX_FILES_BYTES) { toast('Up to 50 MB of files at a time.'); continue; }
+    const d = await readAll(f); if (d) attached[which].push({ name: f.name, size: f.size, data: d });
   }
   renderPics(which); return true;
 }
 function renderPics(which) {
   const box = $(which === 'reply' ? '#shots' : '#nShots'), list = attached[which];
   box.hidden = !list.length;
-  box.innerHTML = list.map((d, i) => `<div class="shot"><img src="${d}" alt="Image ${i + 1}"><button data-rm="${i}" aria-label="Remove image ${i + 1}"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>`).join('');
+  box.innerHTML = list.map((d, i) => typeof d !== 'string' ? `<div class="shot file" title="${esc(d.name)}"><span>${esc(d.name)}</span><em>${sizeOf(d.size)}</em><button data-rm="${i}" aria-label="Remove ${esc(d.name)}"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>`
+    : `<div class="shot"><img src="${d}" alt="Image ${i + 1}"><button data-rm="${i}" aria-label="Remove image ${i + 1}"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>`).join('');
   if (which === 'reply') syncSend(); else renderNew();
 }
 for (const [which, el, strip] of [['reply', input, '#shots'], ['new', $('#nInput'), '#nShots']]) {
@@ -1434,7 +1465,7 @@ $('#send').onclick = () => { const s = cur(); if ($('#send').classList.contains(
 // New task: the circle, the agents' logos, then the box for the one picked. The
 // folder and the model are the tool's own; each session keeps its folder.
 function renderTools() {
-  $('#fabTools').innerHTML = tools.map((x, i) => `<button class="lg ${x.id}${x.ready ? '' : ' off'}" role="menuitem" data-tool="${x.id}" style="--i:${i}" tabindex="${fab === 'pick' ? 0 : -1}" aria-label="${esc(x.ready ? x.name : `${x.name}: ${x.hint}`)}"><span class="tip">${esc(x.name)}${x.ready ? '' : ' <em>· ' + esc(x.hint) + '</em>'}</span>${logo(x.id)}</button>`).join('');
+  $('#fabTools').innerHTML = onTools().map((x, i) => `<button class="lg ${x.id}${x.ready ? '' : ' off'}" role="menuitem" data-tool="${x.id}" style="--i:${i}" tabindex="${fab === 'pick' ? 0 : -1}" aria-label="${esc(x.ready ? x.name : `${x.name}: ${x.hint}`)}"><span class="tip">${esc(x.name)}${x.ready ? '' : ' <em>· ' + esc(x.hint) + '</em>'}</span>${logo(x.id)}</button>`).join('');
 }
 function renderNew() {
   const full = sessions.length >= DESKS.length && !sessions.some(s => !busy(s));
@@ -1884,7 +1915,7 @@ function onAgentBrowser(m) {
 // and nothing of the office covers it; nowhere otherwise. Checked often, sent on change.
 let placed = 'none';
 function placeBrowser() {
-  if (!host || !hostBrowser) return;
+  if (!host || !hostBrowser || (paused && placed === 'none')) return;
   const s = deskOf();
   let id = null, r = null;
   if (s && !paused && panel === 'desk' && desk.ui.tab === 'browser' && agentTabs[s.id]?.url) {
@@ -2026,7 +2057,7 @@ function renderSpace(s, el) {
 }
 let spacePlaced = 'none';
 function placeSpace() {
-  if (!host) return;
+  if (!host || (paused && spacePlaced === 'none')) return;
   const s = deskOf();
   let id = null, r = null, url = '';
   if (s && spacesOn && !paused && panel === 'desk' && desk.ui.tab === 'screen' && spaceView[spaceOf(s)]?.url) {
@@ -2411,12 +2442,12 @@ function frame(now) {
   // pointer is about); otherwise the room only idles, at 10 fps, or not at all when
   // motion is off.
   const calm = !lively && now - pokedAt > 1500;
-  // The Mac host runs at the display's rate (60 or 120 Hz) while something moves, so
-  // walks and camera moves are smooth; idle stays at 10 fps there too.
+  // The Mac host runs at up to 60 fps while something moves (not a ProMotion display's
+  // 120, which doubles the GPU work for little gain); idle stays at 10 fps there too.
   // A live view (the agent's desktop or browser) laid over the panel: the room behind
   // it needs only a few frames, and the view gets the machine.
   const covered = spacePlaced !== 'none' || placed !== 'none';
-  if (acc < (calm ? (still ? 1 : 1 / 10) : covered ? 1 / 12 : RETINA ? 1 / 121 : 1 / 31)) return;
+  if (acc < (calm ? (still ? 1 : 1 / 10) : covered ? 1 / 12 : RETINA ? 1 / 61 : 1 / 31)) return;
   const step = acc; acc = 0; clockT += step;
   for (const s of sessions) { s.b.sync(last(s).stage, poseOf(last(s))); s.b.step(step); }
   for (const l of leaving) l.b.step(step);
