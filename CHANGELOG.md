@@ -5,6 +5,29 @@ What changed in each Hover release. Versions follow [Semantic Versioning](https:
 
 ## [Unreleased]
 
+## [5.2.1] - 2026-11-09
+
+Merged upstream through `76f81a2` (206 commits), including the Windows C# host and shared
+backend updates. This fork retains its automated tests, macOS 13 support and Mac-only agents.
+Go vet, JavaScript syntax, the attachment regression test and the packaged backend smoke test
+passed. The full Go suite has one documented local failure when Cua Driver is installed.
+Real-agent tasks, native UI interaction and Windows/Linux runtime checks were not run.
+
+### Changed
+
+- Windows now uses the upstream C# / WinUI 3 host around the Go backend; Linux keeps the Go UI.
+- The shared backend supports the Windows host's settings, task queue, Kiro Web, voice and
+  desk operations. macOS keeps its Swift shell and web office.
+- Retained the Go, macOS and Windows test suites and their build entry points after upstream
+  removed them in `0179820`. GitHub Actions remain disabled in this fork.
+
+### Fixed
+
+- A helper cancelled while its session starts stays cancelled, and its new session stops.
+- Terminal lists refresh correctly at the 200-command limit, and shells close with their chat.
+- File attachments still reach an agent through the updated reply handler, alongside reply
+  chips. An integration test checks both together.
+
 ## [5.2.0] - 2026-10-26
 
 More agents and more control on the Mac: Oh My Pi (three profiles) and Devin, a switch to turn
